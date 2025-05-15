@@ -8,8 +8,6 @@ import re
 import random
 import json
 import requests
-import requests.packages.urllib3
-requests.packages.urllib3.disable_warnings()
 
 import feedparser
 from bs4 import BeautifulSoup
