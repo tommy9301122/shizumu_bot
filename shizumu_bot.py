@@ -13,8 +13,6 @@ requests.packages.urllib3.disable_warnings()
 
 import feedparser
 from bs4 import BeautifulSoup
-import numpy as np
-import pandas as pd
 import nekos
 import googlemaps
 from googletrans import Translator
@@ -40,46 +38,55 @@ bot = commands.Bot(command_prefix='', intents=intents, help_command=None)
 def googlemaps_search_food(search_food, search_place):
     gmaps = googlemaps.Client(key=Google_Map_API_key)
     location_info = gmaps.geocode(search_place)
-    location_lat = location_info[0].get('geometry').get('location').get('lat')
-    location_lng = location_info[0].get('geometry').get('location').get('lng')
-    search_place_r = gmaps.places_nearby(keyword=search_food, location=str(location_lat)+', '+str(location_lng), language='zh-TW', radius=1000)
-    
-    name_list = []
-    place_id_list = []
-    rating_list = []
-    user_ratings_total_list = []
-    open_now_list = []
-    price_level_list = []
-    
-    for i in search_place_r.get('results'):
-        name_list.append(i.get('name'))
-        place_id_list.append(i.get('place_id'))
-        rating_list.append(i.get('rating'))
-        user_ratings_total_list.append(i.get('user_ratings_total'))
-        open_now = i.get('opening_hours')
-        if open_now != None:
-            open_now = open_now.get('open_now')
-        if open_now == True:
-            open_now='營業中'
-        else:
-            open_now='未營業'
-        open_now_list.append(open_now)
-        price_level_list.append(i.get('price_level'))
-        
-    df_result = pd.DataFrame({'name':name_list, 
-                              'place_id':place_id_list, 
-                              'rating':rating_list, 
-                              'user_ratings_total':user_ratings_total_list,
-                              'open_now':open_now_list,
-                              'price_level':price_level_list
-                             })
-    df_result = df_result.dropna(how='any')
-    try:
-        df_result = df_result.loc[df_result.rating>4].sample()
-    except:
-        df_result = df_result.sample()
-    
-    return df_result.name.values[0], df_result.place_id.values[0], df_result.rating.values[0], df_result.user_ratings_total.values[0], df_result.open_now.values[0], df_result.price_level.values[0]
+    location_lat = location_info[0]['geometry']['location']['lat']
+    location_lng = location_info[0]['geometry']['location']['lng']
+
+    search_place_r = gmaps.places_nearby(
+        keyword=search_food,
+        location=f"{location_lat},{location_lng}",
+        language='zh-TW',
+        radius=1000
+    )
+
+    results = []
+
+    for place in search_place_r.get('results', []):
+        name = place.get('name')
+        place_id = place.get('place_id')
+        rating = place.get('rating')
+        user_ratings_total = place.get('user_ratings_total')
+        price_level = place.get('price_level')
+        open_now_info = place.get('opening_hours')
+        open_now = '營業中' if open_now_info and open_now_info.get('open_now') else '未營業'
+
+        if None not in (name, place_id, rating, user_ratings_total, price_level):
+            results.append({
+                'name': name,
+                'place_id': place_id,
+                'rating': rating,
+                'user_ratings_total': user_ratings_total,
+                'open_now': open_now,
+                'price_level': price_level
+            })
+
+    # 如果有超過 4 分的就選其中一間，否則隨便選一間
+    high_rated = [r for r in results if r['rating'] > 4]
+
+    if high_rated:
+        selected = random.choice(high_rated)
+    elif results:
+        selected = random.choice(results)
+    else:
+        return None, None, None, None, None, None  # 找不到結果時返回空值
+
+    return (
+        selected['name'],
+        selected['place_id'],
+        selected['rating'],
+        selected['user_ratings_total'],
+        selected['open_now'],
+        selected['price_level']
+    )
 
 
 #################################################################################################################################################
