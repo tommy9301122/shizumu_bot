@@ -1,0 +1,1 @@
+worker: python shizumu_bot.py

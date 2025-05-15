@@ -1,0 +1,9 @@
+pandas==1.5.2
+numpy==1.23.0
+requests==2.22.0
+discord.py==1.7.3
+nekos.py==1.0.3
+BeautifulSoup4==4.8.0
+googlemaps==4.4.2
+feedparser==6.0.10
+googletrans==3.1.0a0
