@@ -349,10 +349,10 @@ async def on_message(message):
         return
     
     # 早安、晚安、owo
-    if message.content.lower() == '晚安':
+    if '晚安' in message.content:
         await message.channel.send(f"晚安 <:shizimu_sleep:1356313689019650099> , {message.author.name}")
         
-    if message.content.lower() == "早安":
+    if "早安" in message.content:
         await message.channel.send(f"早安(｡･∀･)ﾉﾞ, {message.author.name}")
 
     # 訊息中包含shizimu_cry
