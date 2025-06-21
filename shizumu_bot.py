@@ -116,7 +116,7 @@ async def on_member_join(member):
 
 # [指令] 代替呱YA說話
 @bot.command()
-async def 呱YA說(ctx, *, arg):
+async def shizumu說(ctx, *, arg):
     #開發人員使用限定 
     if int(ctx.message.author.id)==378936265657286659 or int(ctx.message.author.id)==343984138983964684:
         await ctx.message.delete()
