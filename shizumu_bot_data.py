@@ -19,7 +19,7 @@ shizumu_murmur =  [ '色色指令只能在NSFW頻道使用',
                     '地瓜YA我把拔',
                     '我想加薪',
                     'ennnnuuuuu~',
-                    '忠肝義膽！',
+                    ':shizumu_cry:',
                     '各位晚餐吃什麼呀？',
                     '洗澡了沒'
                    ]
