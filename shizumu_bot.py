@@ -114,7 +114,7 @@ async def on_member_join(member):
         await channel.send("https://i.imgur.com/V6kdDTx.jpg")  #又來了一個新人
         
 
-# [指令] 代替呱YA說話
+# [指令]
 @bot.command()
 async def shizumu說(ctx, *, arg):
     #開發人員使用限定 
