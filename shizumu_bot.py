@@ -111,6 +111,7 @@ async def on_member_join(member):
     if member.guild.id == 1292873644950683658:       #伺服器ID
         channel = bot.get_channel(1292873645794005013)    #頻道ID
         await channel.send("https://i.imgur.com/V6kdDTx.jpg")  #又來了一個新人
+        await channel.send(f"{member.mention} 歡迎~麻煩剛加入的晚餐們，要記得幫忙把DC的ID改成跟YT一樣的喔，這樣好讓我們認識您，謝謝唷!")
         
 
 # [指令]
