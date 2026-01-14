@@ -135,7 +135,7 @@ async def 新聞(ctx):
     embed = discord.Embed(title=('頭條新聞'), description=(datetime.datetime.utcnow()+datetime.timedelta(hours=8)).strftime("%Y/%m/%d"), color=0x7e6487)
     for title, url, source in zip(title_list[:5], url_list[:5], source_name_list[:5] ):
         embed.add_field(name=title, value='['+source+']('+url+')', inline=False)
-    news_message = await ctx.send('呱YA日報 '+(datetime.datetime.utcnow()+datetime.timedelta(hours=8)).strftime("%Y/%m/%d"), embed=embed)
+    news_message = await ctx.send('晚餐日報 '+(datetime.datetime.utcnow()+datetime.timedelta(hours=8)).strftime("%Y/%m/%d"), embed=embed)
     emojis = ['📰', '🎮', '🌤']
     for emoji in emojis:
         await news_message.add_reaction(emoji)
@@ -148,7 +148,7 @@ async def on_raw_reaction_add(payload):
     news_message = await channel.fetch_message(payload.message_id)    
     emoji = payload.emoji
     
-    if news_message.content == '呱YA日報 '+(datetime.datetime.utcnow()+datetime.timedelta(hours=8)).strftime("%Y/%m/%d"): # 只對當日新聞指令有效
+    if news_message.content == '晚餐日報 '+(datetime.datetime.utcnow()+datetime.timedelta(hours=8)).strftime("%Y/%m/%d"): # 只對當日新聞指令有效
         
         if emoji.name == "📰":
             d = feedparser.parse('https://news.google.com/rss?hl=zh-TW&gl=TW&ceid=TW:zh-Hant')
