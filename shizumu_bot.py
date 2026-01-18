@@ -18,7 +18,7 @@ from googletrans import Translator
 import discord
 from discord.ext import commands, tasks
 from discord.ext.commands import CommandNotFound
-
+from PTT_jokes import PttJokes
 from shizumu_bot_data import food_a, food_j, food_c, shizumu_murmur
 
 
@@ -285,6 +285,33 @@ async def 翻譯(ctx, *args):
             output_text = output_text+trans+'\n'
             
     embed=discord.Embed(title='🌏 '+input_text, description=output_text, color=0x3884ff)
+    await ctx.send(embed=embed)
+
+
+# [指令] 笑話 :
+@bot.command()
+async def 笑話(ctx):
+    ptt = PttJokes(1)
+    joke_class_list = ['笑話','猜謎','耍冷','XD']
+    error_n=0
+    while True:
+        try:
+            joke_output = ptt.output()
+            if joke_output[1:3] in joke_class_list and re.search('http',joke_output) is None:
+                joke_output = re.sub('(\\n){4,}','\n\n\n',joke_output)
+
+                joke_title = re.search('.*\\n',joke_output)[0]
+                joke_foot = re.search('\\n.*From ptt',joke_output)[0]
+                joke_main = joke_output.replace(joke_title,'').replace(joke_foot,'')
+                break
+        except:
+            error_n+=1
+            print(error_n)
+            if error_n == 5:
+                break
+            pass
+    embed = discord.Embed(title=joke_title, description=joke_main)
+    embed.set_footer(text=joke_foot)
     await ctx.send(embed=embed)
 
 
