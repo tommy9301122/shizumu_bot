@@ -427,8 +427,8 @@ async def 色色(ctx):
 # ================================
 
 # [指令] 聊天 - 與 Letta Agent 對話
-@bot.command(aliases=['ai_chat', 'chat'])
-async def 聊天(ctx, *, message_content: str):
+@bot.command(aliases=['shizumu_doro', 'shizumudoro'])
+async def 小寒(ctx, *, message_content: str):
     """使用 Letta AI 進行對話"""
     if not letta_client:
         await ctx.send("❌ 對話功能目前未啟用,問問看地瓜YA怎麼了")
@@ -480,7 +480,7 @@ async def _handle_ai_chat(ctx, message_content: str):
 
 
 # [指令] 重置記憶
-@bot.command(aliases=['reset_memory', '重置記憶'])
+@bot.command(aliases=['重置記憶'])
 async def reset_memory(ctx):
     """重置您的 AI Agent 對話記憶"""
     if not letta_client:
