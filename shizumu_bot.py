@@ -14,7 +14,6 @@ import feedparser
 from bs4 import BeautifulSoup
 import nekos
 import googlemaps
-from googletrans import Translator
 from dotenv import load_dotenv
 #import openai
 import discord
@@ -408,28 +407,6 @@ async def 早餐吃什麼(ctx, *args):
             await ctx.send('早餐不要吃土，再骰一次!')
         else:
             await ctx.send(random.choice(food_b)+random.choice(ending_list))
-
-
-# [指令] 翻譯 :
-@bot.command(aliases=['translate'])
-async def 翻譯(ctx, *args):
-    input_text = ' '.join(args)
-    
-    translator = Translator()
-    us_trans = translator.translate(input_text, dest='en').text
-    tw_trans = translator.translate(input_text, dest='zh-tw').text
-    kr_trans = translator.translate(input_text, dest='ko').text
-    jp_trans = translator.translate(input_text, dest='ja').text
-    cn_trans = translator.translate(input_text, dest='zh-cn').text
-    
-    trans_list = [us_trans, tw_trans, kr_trans, jp_trans, cn_trans]
-    output_text = ''
-    for trans in trans_list:
-        if input_text!=trans:
-            output_text = output_text+trans+'\n'
-            
-    embed=discord.Embed(title='🌏 '+input_text, description=output_text, color=0x3884ff)
-    await ctx.send(embed=embed)
 
 
 # [NSFW指令] 色色
