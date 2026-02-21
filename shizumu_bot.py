@@ -398,7 +398,7 @@ async def 晚餐吃什麼(ctx, *args):
 
 
 # [指令] 早餐吃什麼:
-@bot.command(aliases=['早餐吃什麼'])
+@bot.command()
 async def 早餐吃什麼(ctx, *args):
     ending_list = ['怎麼樣?','好吃',' 98','?','']
     if len(args)==0:
