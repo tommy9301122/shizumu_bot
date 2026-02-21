@@ -5,7 +5,7 @@ python-dotenv==1.0.0
 # 現有功能依賴套件
 requests==2.31.0
 nekos.py==1.0.3
-beautifulsoup4==4.12.2
+beautifulsoup4==4.12.3
 googlemaps==4.4.2
 feedparser==6.0.10
 
