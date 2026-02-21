@@ -1,7 +1,17 @@
+# Discord Bot 核心套件
+discord.py==2.3.2
+python-dotenv==1.0.0
+
+# 現有功能依賴套件
 requests==2.31.0
-discord.py==1.7.3
 nekos.py==1.0.3
-BeautifulSoup4==4.8.0
-googlemaps==4.4.2
+beautifulsoup4==4.12.2
+googlemaps==4.10.0
 feedparser==6.0.10
 googletrans==3.1.0a0
+
+# Letta AI 對話功能 (可選)
+letta>=0.3.0
+
+# 額外依賴
+aiohttp>=3.9.0
