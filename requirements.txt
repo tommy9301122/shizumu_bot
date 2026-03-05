@@ -9,8 +9,5 @@ beautifulsoup4==4.12.3
 googlemaps==4.4.2
 feedparser==6.0.10
 
-# Letta AI 對話功能 (可選)
-letta==0.16.4
-
-# 額外依賴
-aiohttp>=3.9.0
+# Gemini AI 對話功能
+google-generativeai>=0.8.0
