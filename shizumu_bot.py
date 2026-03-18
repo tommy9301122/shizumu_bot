@@ -287,7 +287,7 @@ _TOOLS = [
                 properties={
                     "meal_type": genai_types.Schema(
                         type=genai_types.Type.STRING,
-                        description="餐別：breakfast（早餐）、lunch（午餐）、dinner（晚餐），預設 dinner",
+                        description="餐別：breakfast（早餐）、lunch（午餐）、dinner（晚餐）",
                         enum=["breakfast", "lunch", "dinner"]
                     ),
                     "food_class": genai_types.Schema(
