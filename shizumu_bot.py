@@ -393,7 +393,11 @@ def _execute_get_weather_info(city: str = "臺北") -> str:
     try:
         url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-091?Authorization={weather_authorization}"
         data = requests.get(url).json()['records']['Locations'][0]['Location']
-        loc_num = city_index_map.get(city, 16)
+        loc_num = city_index_map.get(city)
+        if loc_num is None:
+            # 若找不到對應城市，使用臺北作為預設城市，避免出現「顯示城市 != 實際資料來源」的情況
+            loc_num = 16
+            city = "臺北"
         weather_data = data[loc_num]['WeatherElement']
         temp = weather_data[0]['Time'][0]['ElementValue'][0]['Temperature']
         rain = weather_data[11]['Time'][0]['ElementValue'][0]['ProbabilityOfPrecipitation']
