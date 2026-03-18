@@ -519,7 +519,7 @@ def googlemaps_search_food(search_food, search_place):
 async def activity_auto_change():
     status_w = discord.Status.online
     activity_w = discord.Activity(type=discord.ActivityType.playing, name=random.choice(shizumu_murmur))
-    await bot.change_presence(status_w, activity_w)
+    await bot.change_presence(status=status_w, activity=activity_w)
 
 
 # [啟動]
