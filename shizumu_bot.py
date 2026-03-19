@@ -800,11 +800,27 @@ async def list_memory(ctx):
     if not _shared_memory["facts"]:
         await ctx.send("目前沒有共享記憶喔 (´・ω・`)")
         return
-    embed = discord.Embed(title="📚 共享記憶列表", color=0x7e6487)
-    for i, fact in enumerate(_shared_memory["facts"], 1):
-        embed.add_field(name=f"#{i}", value=fact, inline=False)
-    embed.set_footer(text=f"最後更新：{_shared_memory.get('updated', '未知')}　｜　上限 {MAX_SHARED_FACTS} 條")
-    await ctx.send(embed=embed)
+
+    facts = _shared_memory["facts"]
+    max_fields = 25  # Discord 每個 embed 最多 25 個欄位
+    total = len(facts)
+    total_pages = (total + max_fields - 1) // max_fields
+
+    for page_index in range(total_pages):
+        start = page_index * max_fields
+        end = start + max_fields
+        embed = discord.Embed(title="📚 共享記憶列表", color=0x7e6487)
+
+        # 全域編號，避免和清除指令的 index 搞混
+        for i, fact in enumerate(facts[start:end], start + 1):
+            embed.add_field(name=f"#{i}", value=fact, inline=False)
+
+        footer_text = f"最後更新：{_shared_memory.get('updated', '未知')}　｜　上限 {MAX_SHARED_FACTS} 條"
+        if total_pages > 1:
+            footer_text += f"　｜　頁面 {page_index + 1}/{total_pages}"
+        embed.set_footer(text=footer_text)
+
+        await ctx.send(embed=embed)
 
 
 # [指令] 清除共享記憶（限管理員）
