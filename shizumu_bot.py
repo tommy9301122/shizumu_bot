@@ -297,7 +297,7 @@ _TOOLS = [{
     "function_declarations": [
         {
             "name": "get_food_recommendation",
-            "description": "推薦餐點或餐廳。當使用者詢問吃什麼、推薦食物、早餐、午餐、晚餐時使用。",
+            "description": "推薦餐點或餐廳。當使用者詢問吃什麼、推薦食物、早餐、午餐、晚餐時，呼叫此工具，不要反問使用者其他細節。",
             "parameters": {
                 "type": "OBJECT",
                 "properties": {
@@ -307,11 +307,11 @@ _TOOLS = [{
                     },
                     "food_class": {
                         "type": "STRING",
-                        "description": "料理類型：中式、台式、日式、美式，若使用者未指定則省略此參數"
+                        "description": "料理類型：中式、台式、日式、美式，若使用者未主動指定則省略此參數，絕對不要反問使用者其他細節。"
                     },
                     "location": {
                         "type": "STRING",
-                        "description": "地點名稱，若使用者有明確指定地點才填入，例如：台北、信義區"
+                        "description": "地點名稱，若使用者有明確指定地點才填入，例如：台北、信義區，，若無提及請直接省略，絕對不要反問使用者其他細節。"
                     }
                 },
                 "required": ["meal_type"]
