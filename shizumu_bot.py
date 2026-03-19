@@ -293,55 +293,53 @@ def get_gemini_response(user_id: str, user_name: str, message: str) -> str:
 # Function Calling 工具定義
 # ================================
 
-_TOOLS = [
-    genai_types.Tool(function_declarations=[
-        genai_types.FunctionDeclaration(
-            name="get_food_recommendation",
-            description="推薦餐點或餐廳。當使用者詢問吃什麼、推薦食物、早餐、午餐、晚餐時使用。",
-            parameters=genai_types.Schema(
-                type=genai_types.Type.OBJECT,
-                properties={
-                    "meal_type": genai_types.Schema(
-                        type=genai_types.Type.STRING,
-                        description="餐別：breakfast（早餐）、lunch（午餐）、dinner（晚餐）",
-                        enum=["breakfast", "lunch", "dinner"]
-                    ),
-                    "food_class": genai_types.Schema(
-                        type=genai_types.Type.STRING,
-                        description="料理類型：中式、台式、日式、美式，若使用者未指定則省略此參數",
-                        enum=["中式", "台式", "日式", "美式"]
-                    ),
-                    "location": genai_types.Schema(
-                        type=genai_types.Type.STRING,
-                        description="地點名稱，若使用者有明確指定地點才填入，例如：台北、信義區"
-                    )
+_TOOLS = [{
+    "function_declarations": [
+        {
+            "name": "get_food_recommendation",
+            "description": "推薦餐點或餐廳。當使用者詢問吃什麼、推薦食物、早餐、午餐、晚餐時使用。",
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {
+                    "meal_type": {
+                        "type": "STRING",
+                        "description": "餐别：breakfast（早餐）、lunch（午餐）、dinner（晚餐）"
+                    },
+                    "food_class": {
+                        "type": "STRING",
+                        "description": "料理類型：中式、台式、日式、美式，若使用者未指定則省略此參數"
+                    },
+                    "location": {
+                        "type": "STRING",
+                        "description": "地點名稱，若使用者有明確指定地點才填入，例如：台北、信義區"
+                    }
                 },
-                required=["meal_type"]
-            )
-        ),
-        genai_types.FunctionDeclaration(
-            name="get_earthquake_info",
-            description="取得最新地震資訊。當使用者詢問地震、有沒有在搖、有沒有地震時使用。",
-            parameters=genai_types.Schema(
-                type=genai_types.Type.OBJECT,
-                properties={}
-            )
-        ),
-        genai_types.FunctionDeclaration(
-            name="get_weather_info",
-            description="取得天氣預報。當使用者詢問天氣、下雨、溫度、要不要帶傘時使用。",
-            parameters=genai_types.Schema(
-                type=genai_types.Type.OBJECT,
-                properties={
-                    "city": genai_types.Schema(
-                        type=genai_types.Type.STRING,
-                        description="城市名稱，例如：臺北、臺中、嘉義、高雄、花蓮，若未指定預設臺北"
-                    )
+                "required": ["meal_type"]
+            }
+        },
+        {
+            "name": "get_earthquake_info",
+            "description": "取得最新地震資訊。當使用者詢問地震、有沒有在搖、有沒有地震時使用。",
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {}
+            }
+        },
+        {
+            "name": "get_weather_info",
+            "description": "取得天氣預報。當使用者詢問天氣、下雨、溫度、要不要帶傘時使用。",
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {
+                    "city": {
+                        "type": "STRING",
+                        "description": "城市名稱，例如：臺北、臺中、嘉義、高雄、花蓮，若未指定預設臺北"
+                    }
                 }
-            )
-        )
-    ])
-]
+            }
+        }
+    ]
+}]
 
 
 # ================================
