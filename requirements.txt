@@ -10,4 +10,4 @@ googlemaps==4.4.2
 feedparser==6.0.10
 
 # Gemini AI 對話功能
-google-generativeai>=0.8.0
+google-generativeai==0.7.2
