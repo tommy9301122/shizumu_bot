@@ -111,10 +111,26 @@ def load_memories():
     """Bot 啟動時從 JSON 載入所有持久化記憶"""
     global _shared_memory, _personal_summaries
     if MEMORY_FILE.exists():
-        data = json.loads(MEMORY_FILE.read_text(encoding="utf-8"))
-        _shared_memory = data.get("shared", {"facts": [], "updated": ""})
-        _personal_summaries = data.get("personal", {})
-        print(f"[記憶] 已載入共享記憶 {len(_shared_memory['facts'])} 條，個人摘要 {len(_personal_summaries)} 位")
+        try:
+            raw = MEMORY_FILE.read_text(encoding="utf-8")
+            # 若檔案為空或只含空白，視為無效 JSON
+            if raw.strip():
+                data = json.loads(raw)
+            else:
+                raise json.JSONDecodeError("Empty memory file", raw, 0)
+        except (json.JSONDecodeError, OSError) as e:
+            # 檔案損毀、讀取失敗或 JSON 格式錯誤時，回退到預設記憶結構並記錄警告
+            print(f"[記憶][警告] 載入記憶檔失敗 ({e!r})，將使用預設記憶結構。")
+            _shared_memory = {"facts": [], "updated": ""}
+            _personal_summaries = {}
+            return
+        else:
+            _shared_memory = data.get("shared", {"facts": [], "updated": ""})
+            _personal_summaries = data.get("personal", {})
+            print(f"[記憶] 已載入共享記憶 {len(_shared_memory['facts'])} 條，個人摘要 {len(_personal_summaries)} 位")
+    else:
+        # 未找到記憶檔，保留預設結構
+        print("[記憶] 未找到記憶檔，將使用預設記憶結構。")
 
 
 def save_memories():
