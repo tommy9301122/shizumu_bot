@@ -418,18 +418,34 @@ def _handle_function_calls(chat, response) -> str:
     """
     處理 Gemini 的 Function Call 回應。
     Gemini 可能連續要求多次 function call，迴圈處理直到得到純文字回覆。
+    如果 Gemini 回應被安全機制阻擋或沒有候選，會回傳可讀錯誤訊息，
+    而不是直接觸發 IndexError/AttributeError。
     """
     MAX_ROUNDS = 5
 
     for _ in range(MAX_ROUNDS):
+        # 防禦性檢查：確保有候選與內容可用
+        candidates = getattr(response, "candidates", None)
+        if not candidates:
+            fallback_text = getattr(response, "text", None)
+            return fallback_text or "無法取得模型回應（候選結果為空或缺失）。"
+
+        first_candidate = candidates[0]
+        content = getattr(first_candidate, "content", None)
+        parts = getattr(content, "parts", None) if content is not None else None
+        if not parts:
+            fallback_text = getattr(response, "text", None)
+            return fallback_text or "無法取得模型回應內容（content.parts 為空或缺失）。"
+
         fn_calls = [
             part.function_call
-            for part in response.candidates[0].content.parts
+            for part in parts
             if hasattr(part, "function_call") and part.function_call.name
         ]
 
         if not fn_calls:
-            return response.text
+            fallback_text = getattr(response, "text", None)
+            return fallback_text or "未偵測到可用的函式呼叫，且無可用文字回覆。"
 
         fn_results = []
         for fn_call in fn_calls:
@@ -450,7 +466,9 @@ def _handle_function_calls(chat, response) -> str:
 
         response = chat.send_message(fn_results)
 
-    return response.text
+    # 超過 MAX_ROUNDS 仍未取得純文字回應時，回傳最後一個 response 的文字或錯誤訊息
+    fallback_text = getattr(response, "text", None)
+    return fallback_text or "反覆處理函式呼叫後仍無法取得模型文字回應。"
 
 
 # ================================
