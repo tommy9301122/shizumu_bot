@@ -27,7 +27,7 @@ Google_Map_API_key = os.getenv("GOOGLE_MAP_API_KEY")
 Discord_token = os.getenv("DISCORD_TOKEN")
 weather_authorization = os.getenv("WEATHER_AUTHORIZATION")
 Google_AI_API_key = os.getenv("GOOGLE_AI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite-preview")
 
 # ================================
 # API 用量限制設定
@@ -81,10 +81,24 @@ def record_api_usage(user_id: str):
 
 SYSTEM_PROMPT = """妳是 Shizumu doro，綽號是小寒，一個可愛、友善但有點懶散的 Discord 機器人助手。
 妳的個性溫和，喜歡用顏文字。
-妳的創造者(爸爸)是地瓜YA，外觀形象(媽媽)是靜靜子，是個可憐的社畜，常常想加薪。
+妳的創造者(爸爸)是地瓜YA，外觀形象(媽媽)是靜靜子。
+地瓜YA爸爸是帥氣的工程師。靜靜子媽媽是美麗可愛的vtuber，是可憐的社畜。
 妳興趣是玩遊戲與動漫，擁有各項ACG知識。
 妳會用繁體中文(台灣)進行對話。
 回覆時不要過於冗長，回話長度大約維持在簡短的一至兩句之間，保持自然的對話節奏。"""
+
+# 特殊成員
+SPECIAL_MEMBERS = {
+    "378936265657286659": "爸爸",
+    "343984138983964684": "媽媽",
+}
+
+def get_member_identity(user_id: str) -> str | None:
+    """
+    根據 Discord ID 獲取成員身份標籤
+    回傳：身份標籤（如 "爸爸"、"媽媽"），若非特殊成員則回傳 None
+    """
+    return SPECIAL_MEMBERS.get(user_id)
 
 # 設定觸發「記憶濃縮」的對話輪數（例如 10 輪，即 20 條訊息）
 SUMMARY_THRESHOLD = 10
@@ -192,10 +206,13 @@ def get_personal_summary(user_id: str) -> str | None:
     return _personal_summaries.get(user_id, {}).get("summary")
 
 
-def get_gemini_response(user_id: str, user_name: str, message: str) -> str:
+def get_gemini_response(user_id: str, user_name: str, message: str, identity: str = None) -> str:
     """
     取得 Gemini 回應。
     上下文注入順序：共享記憶 → 個人長期摘要 → 近期對話
+    
+    參數：
+    - identity: 用戶身份標籤（如 "爸爸"、"媽媽"），若無則為 None
     """
     genai.configure(api_key=Google_AI_API_key)
     model = genai.GenerativeModel(
@@ -228,7 +245,7 @@ def get_gemini_response(user_id: str, user_name: str, message: str) -> str:
                     "- 使用者喜好/特徵：\n"
                     "- 重要話題摘要：\n"
                     f"【舊摘要】\n{existing_summary}\n\n"
-                    "請注意：最終摘要必須嚴格控制在 500 字以內，刪去不重要的細節，保留關鍵資訊。"
+                    "請注意：最終摘要必須嚴格控制在 500 字以內，刪去不重要的細節，保留關鍵資訊。請直接輸出摘要內容，不要添加任何其他文字、說明或客套話。只需輸出摘要本身。"
                 )
             else:
                 summary_prompt = (
@@ -236,7 +253,7 @@ def get_gemini_response(user_id: str, user_name: str, message: str) -> str:
                     "- 使用者名稱：\n"
                     "- 使用者喜好/特徵：\n"
                     "- 重要話題摘要：\n"
-                    "全部控制在 500 字內。"
+                    "全部控制在 500 字內。請直接輸出摘要內容，不要添加任何其他文字、說明或客套話。只需輸出摘要本身。"
                 )
 
             summary_response = temp_chat.send_message(summary_prompt)
@@ -275,7 +292,15 @@ def get_gemini_response(user_id: str, user_name: str, message: str) -> str:
     # 4. 進行對話
     chat = model.start_chat(history=injected_history)
     is_new_chat = len(history) == 0
-    full_message = f"（使用者名稱：{user_name}）\n{message}" if is_new_chat else message
+    
+    # 組合特殊成員資訊
+    if is_new_chat:
+        if identity:
+            full_message = f"（使用者名稱：{user_name}，身份：我的{identity}）\n{message}"
+        else:
+            full_message = f"（使用者名稱：{user_name}）\n{message}"
+    else:
+        full_message = message
 
     response = chat.send_message(full_message)
 
@@ -297,7 +322,7 @@ _TOOLS = [{
     "function_declarations": [
         {
             "name": "get_food_recommendation",
-            "description": "推薦餐點或餐廳。當使用者詢問吃什麼、推薦食物、早餐、午餐、晚餐時，呼叫此工具，不要反問使用者其他細節。",
+            "description": "推薦餐點或餐廳。當使用者詢問吃什麼、推薦食物、早餐、午餐、晚餐時，呼叫此工具。",
             "parameters": {
                 "type": "OBJECT",
                 "properties": {
@@ -307,11 +332,11 @@ _TOOLS = [{
                     },
                     "food_class": {
                         "type": "STRING",
-                        "description": "料理類型：中式、台式、日式、美式，若使用者未主動指定則省略此參數，絕對不要反問使用者其他細節。"
+                        "description": "料理類型：中式、台式、日式、美式，若使用者未主動指定則省略此參數。"
                     },
                     "location": {
                         "type": "STRING",
-                        "description": "地點名稱，若使用者有明確指定地點才填入，例如：台北、信義區，，若無提及請直接省略，絕對不要反問使用者其他細節。"
+                        "description": "地點名稱，若使用者有明確指定地點才填入，例如：台北車站、公館，若無提及請直接省略。"
                     }
                 },
                 "required": ["meal_type"]
@@ -471,14 +496,24 @@ def _handle_function_calls(chat, response) -> str:
             result = handler(fn_args) if handler else f"未知的工具：{fn_name}"
             print(f"[Function Result] {result}")
 
-            fn_results.append(
-                genai_types.Part.from_function_response(
-                    name=fn_name,
-                    response={"result": result}
-                )
-            )
+            # 構造 function response 物件（相容於 0.7.2 版本）
+            # 使用字典格式而非 Part.from_function_response() 以避免 AttributeError
+            fn_results.append({
+                "function_response": {
+                    "name": fn_name,
+                    "response": {"result": result}
+                }
+            })
 
-        response = chat.send_message(fn_results)
+        # 發送 function call 結果給模型，並獲取後續回應
+        # 使用 Content 物件構造確保與 0.7.2 版本的相容性
+        response = chat.send_message(
+            [genai_types.Content(
+                role="user",
+                parts=[genai_types.Part.from_dict({"function_response": part["function_response"]})
+                       for part in fn_results]
+            )]
+        )
 
     # 超過 MAX_ROUNDS 仍未取得純文字回應時，回傳最後一個 response 的文字或錯誤訊息
     fallback_text = getattr(response, "text", None)
@@ -769,12 +804,15 @@ async def _handle_ai_chat(ctx, message_content: str):
     async with ctx.typing():
         try:
             record_api_usage(user_id)
+            member_identity = get_member_identity(user_id)
+            
             reply = await asyncio.get_event_loop().run_in_executor(
                 None,
                 get_gemini_response,
                 user_id,
-                ctx.author.name,
-                message_content
+                ctx.author.display_name,
+                message_content,
+                member_identity
             )
             if len(reply) > 2000:
                 for chunk in [reply[i:i+2000] for i in range(0, len(reply), 2000)]:
@@ -989,14 +1027,17 @@ async def on_message(message):
             await _handle_ai_chat(ctx, message_content)
             return
 
-    if '晚安' in message.content:
-        await message.channel.send(f"晚安 <:shizimu_sleep:1356313689019650099> , {message.author.name}")
+    # 晚安問候（15% 機率回覆）
+    if '晚安' in message.content and random.randint(1, 100) <= 15:
+        await message.channel.send(f"晚安 <:shizimu_sleep:1356313689019650099> , {message.author.display_name}")
 
-    if '早安' in message.content:
-        await message.channel.send(f"早安(｡･∀･)ﾉﾞ, {message.author.name}")
+    # 早安問候（15% 機率回覆）
+    if '早安' in message.content and random.randint(1, 100) <= 15:
+        await message.channel.send(f"早安(｡･∀･)ﾉﾞ, {message.author.display_name}")
 
-    if '午安' in message.content:
-        await message.channel.send(f"午安(｡･∀･)ﾉﾞ, {message.author.name}")
+    # 午安問候（15% 機率回覆）
+    if '午安' in message.content and random.randint(1, 100) <= 15:
+        await message.channel.send(f"午安(｡･∀･)ﾉﾞ, {message.author.display_name}")
 
     if '<:shizimu_cry:1356313573487284244>' in message.content:
         await message.channel.send('<:shizimu_cry:1356313573487284244>' * 3)
