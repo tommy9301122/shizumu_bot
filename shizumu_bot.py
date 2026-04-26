@@ -506,13 +506,9 @@ def _handle_function_calls(chat, response) -> str:
             })
 
         # 發送 function call 結果給模型，並獲取後續回應
-        # 使用 Content 物件構造確保與 0.7.2 版本的相容性
+        # 使用字典格式直接發送，兼容所有版本
         response = chat.send_message(
-            [genai_types.Content(
-                role="user",
-                parts=[genai_types.Part.from_dict({"function_response": part["function_response"]})
-                       for part in fn_results]
-            )]
+            [{"function_response": part["function_response"]} for part in fn_results]
         )
 
     # 超過 MAX_ROUNDS 仍未取得純文字回應時，回傳最後一個 response 的文字或錯誤訊息
