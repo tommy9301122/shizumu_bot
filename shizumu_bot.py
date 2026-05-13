@@ -10,15 +10,26 @@ import threading
 import time
 from collections import deque
 
-import feedparser
-import googlemaps
 from dotenv import load_dotenv
 import discord
 from discord.ext import commands, tasks
 from discord.ext.commands import CommandNotFound
 import google.generativeai as genai
 from google.generativeai import types as genai_types
-from shizumu_bot_data import FOOD_AMERICAN, FOOD_JAPANESE, FOOD_CHINESE, FOOD_BREAKFAST, SHIZUMU_MURMUR, INTEREST_KEYWORDS
+from shizumu_bot_data import SHIZUMU_MURMUR, INTEREST_KEYWORDS
+from shizumu_services import (
+    ALLOWED_FOOD_CLASSES,
+    FOOD_ENDINGS,
+    FoodRecommendation,
+    get_earthquake_info_text,
+    get_earthquake_report,
+    get_food_recommendation,
+    get_food_recommendation_text,
+    get_headline_articles,
+    get_weather_forecast_rows,
+    get_weather_info_text,
+    today_taipei,
+)
 
 # ================================
 # 環境變數載入
@@ -30,6 +41,9 @@ Discord_token = os.getenv("DISCORD_TOKEN")
 weather_authorization = os.getenv("WEATHER_AUTHORIZATION")
 Google_AI_API_key = os.getenv("GOOGLE_AI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite-preview")
+SHIZUMU_API_ENABLED = os.getenv("SHIZUMU_API_ENABLED", "1").lower() not in ("0", "false", "no")
+SHIZUMU_API_HOST = os.getenv("SHIZUMU_API_HOST", "0.0.0.0")
+SHIZUMU_API_PORT = int(os.getenv("PORT", os.getenv("SHIZUMU_API_PORT", "8000")))
 
 # 管理員 ID 列表（可以使用特殊指令）
 ADMIN_IDS = [378936265657286659, 343984138983964684]
@@ -719,78 +733,15 @@ _TOOLS = [{
 # ================================
 
 def _execute_get_food_recommendation(meal_type: str, food_class: str = None, location: str = None) -> str:
-    ending_list = ['怎麼樣?', '好吃', ' 98', '?', '']
-
-    if meal_type == "breakfast":
-        if random.randint(1, 100) < 2:
-            return "早餐不要吃土，再骰一次!"
-        return f"推薦早餐：{random.choice(FOOD_BREAKFAST)}{random.choice(ending_list)}"
-
-    # 2% 機率吃土
-    if random.randint(1, 100) <= 2:
-        return "還是吃土?"
-
-    if food_class in ("中式", "台式"):
-        candidates = FOOD_CHINESE
-    elif food_class == "日式":
-        candidates = FOOD_JAPANESE
-    elif food_class == "美式":
-        candidates = FOOD_AMERICAN
-    else:
-        candidates = FOOD_JAPANESE + FOOD_AMERICAN + FOOD_CHINESE
-
-    search_food = random.choice(candidates)
-
-    if location:
-        try:
-            name, place_id, rating, total, open_now, price = googlemaps_search_food(search_food, location)
-            if name:
-                maps_url = f"https://www.google.com/maps/search/?api=1&query={search_food}&query_place_id={place_id}"
-                return (
-                    f"在「{location}」附近找到一間不錯的餐廳！\n"
-                    f"🍽️ {name}\n"
-                    f"⭐ {rating}　👄 {total} 則評論　🕓 {open_now}　{'💵' * int(price)}\n"
-                    f"類型：{search_food}\n"
-                    f"地圖連結：{maps_url}"
-                )
-            else:
-                return f"在「{location}」附近找不到適合的 {search_food} 餐廳，要不要換個地點試試？"
-        except Exception as e:
-            return f"查詢餐廳時發生錯誤：{e}"
-
-    return f"推薦吃：{search_food}{random.choice(ending_list)}"
+    return get_food_recommendation_text(meal_type, food_class, location)
 
 
 def _execute_get_earthquake_info() -> str:
-    try:
-        url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/E-A0015-001?Authorization={weather_authorization}"
-        eq_data = requests.get(url).json()
-        eq = eq_data['records']['Earthquake'][0]
-        return (
-            f"{eq['ReportContent']}\n"
-            f"詳細資訊：{eq['Web']}"
-        )
-    except Exception as e:
-        return f"查詢地震資訊失敗：{e}"
+    return get_earthquake_info_text()
 
 
 def _execute_get_weather_info(city: str = "臺北") -> str:
-    city_index_map = {"臺北": 16, "台北": 16, "臺中": 19, "台中": 19, "嘉義": 15, "高雄": 17, "花蓮": 11}
-    try:
-        url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-091?Authorization={weather_authorization}"
-        data = requests.get(url).json()['records']['Locations'][0]['Location']
-        loc_num = city_index_map.get(city)
-        if loc_num is None:
-            # 若找不到對應城市，使用臺北作為預設城市，避免出現「顯示城市 != 實際資料來源」的情況
-            loc_num = 16
-            city = "臺北"
-        weather_data = data[loc_num]['WeatherElement']
-        temp = weather_data[0]['Time'][0]['ElementValue'][0]['Temperature']
-        rain = weather_data[11]['Time'][0]['ElementValue'][0]['ProbabilityOfPrecipitation']
-        weat = weather_data[12]['Time'][0]['ElementValue'][0]['Weather']
-        return f"{city}天氣：{weat}，氣溫 {temp}°C，降雨機率 {rain}%"
-    except Exception as e:
-        return f"查詢天氣失敗：{e}"
+    return get_weather_info_text(city)
 
 
 _TOOL_HANDLERS = {
@@ -877,59 +828,33 @@ intents.message_content = True
 bot = commands.Bot(command_prefix='', intents=intents, help_command=None)
 
 
-# ================================
-# Google Maps 推薦餐廳
-# ================================
-def googlemaps_search_food(search_food, search_place):
-    gmaps = googlemaps.Client(key=Google_Map_API_key)
-    location_info = gmaps.geocode(search_place)
-    location_lat = location_info[0]['geometry']['location']['lat']
-    location_lng = location_info[0]['geometry']['location']['lng']
-
-    search_place_r = gmaps.places_nearby(
-        keyword=search_food,
-        location=f"{location_lat},{location_lng}",
-        language='zh-TW',
-        radius=1000
-    )
-
-    results = []
-    for place in search_place_r.get('results', []):
-        name = place.get('name')
-        place_id = place.get('place_id')
-        rating = place.get('rating')
-        user_ratings_total = place.get('user_ratings_total')
-        price_level = place.get('price_level')
-        open_now_info = place.get('opening_hours')
-        open_now = '營業中' if open_now_info and open_now_info.get('open_now') else '未營業'
-
-        if None not in (name, place_id, rating, user_ratings_total, price_level):
-            results.append({
-                'name': name,
-                'place_id': place_id,
-                'rating': rating,
-                'user_ratings_total': user_ratings_total,
-                'open_now': open_now,
-                'price_level': price_level
-            })
-
-    high_rated = [r for r in results if r['rating'] > 4]
-    selected = random.choice(high_rated) if high_rated else (random.choice(results) if results else None)
-
-    if not selected:
-        return None, None, None, None, None, None
-
-    return (
-        selected['name'],
-        selected['place_id'],
-        selected['rating'],
-        selected['user_ratings_total'],
-        selected['open_now'],
-        selected['price_level']
-    )
-
-
 #################################################################################################################################################
+
+
+_api_server_thread: threading.Thread | None = None
+
+
+def start_api_server_if_enabled():
+    global _api_server_thread
+    if not SHIZUMU_API_ENABLED:
+        print("Shizumu API 已停用（SHIZUMU_API_ENABLED=0）")
+        return
+    if _api_server_thread and _api_server_thread.is_alive():
+        return
+
+    def run_api_server():
+        import uvicorn
+
+        uvicorn.run(
+            "shizumu_api:app",
+            host=SHIZUMU_API_HOST,
+            port=SHIZUMU_API_PORT,
+            log_level=os.getenv("SHIZUMU_API_LOG_LEVEL", "info"),
+        )
+
+    _api_server_thread = threading.Thread(target=run_api_server, daemon=True, name="shizumu-api")
+    _api_server_thread.start()
+    print(f"Shizumu API 啟動中：http://{SHIZUMU_API_HOST}:{SHIZUMU_API_PORT}")
 
 
 # [自動更新狀態]
@@ -979,15 +904,10 @@ async def shizumu說(ctx, *, arg):
 # [指令] 新聞
 @bot.command()
 async def 新聞(ctx):
-    d = feedparser.parse('https://news.google.com/rss?hl=zh-TW&gl=TW&ceid=TW:zh-Hant')
-    n_title = [i.title for i in d.entries]
-    source_name_list = [i.source.title for i in d.entries]
-    title_list = [t.replace(' - ' + s, '') for t, s in zip(n_title, source_name_list)]
-    url_list = [i.link for i in d.entries]
-    embed = discord.Embed(title='頭條新聞', description=(datetime.datetime.utcnow() + datetime.timedelta(hours=8)).strftime("%Y/%m/%d"), color=0x7e6487)
-    for title, url, source in zip(title_list[:5], url_list[:5], source_name_list[:5]):
-        embed.add_field(name=title, value='[' + source + '](' + url + ')', inline=False)
-    news_message = await ctx.send('晚餐日報 ' + (datetime.datetime.utcnow() + datetime.timedelta(hours=8)).strftime("%Y/%m/%d"), embed=embed)
+    embed = discord.Embed(title='頭條新聞', description=today_taipei(), color=0x7e6487)
+    for article in get_headline_articles():
+        embed.add_field(name=article.title, value=f'[{article.source}]({article.url})', inline=False)
+    news_message = await ctx.send('晚餐日報 ' + today_taipei(), embed=embed)
     for emoji in ['📰', '🎮', '🌤']:
         await news_message.add_reaction(emoji)
 
@@ -1000,37 +920,22 @@ async def on_raw_reaction_add(payload):
     news_message = await channel.fetch_message(payload.message_id)
     emoji = payload.emoji
 
-    if news_message.content == '晚餐日報 ' + (datetime.datetime.utcnow() + datetime.timedelta(hours=8)).strftime("%Y/%m/%d"):
+    if news_message.content == '晚餐日報 ' + today_taipei():
         if emoji.name == "📰":
-            d = feedparser.parse('https://news.google.com/rss?hl=zh-TW&gl=TW&ceid=TW:zh-Hant')
-            n_title = [i.title for i in d.entries]
-            source_name_list = [i.source.title for i in d.entries]
-            title_list = [t.replace(' - ' + s, '') for t, s in zip(n_title, source_name_list)]
-            url_list = [i.link for i in d.entries]
-            google_embed = discord.Embed(title='頭條新聞', description=(datetime.datetime.utcnow() + datetime.timedelta(hours=8)).strftime("%Y/%m/%d"), color=0x598ad9)
-            for title, url, source in zip(title_list[:5], url_list[:5], source_name_list[:5]):
-                google_embed.add_field(name=title, value='[' + source + '](' + url + ')', inline=False)
+            google_embed = discord.Embed(title='頭條新聞', description=today_taipei(), color=0x598ad9)
+            for article in get_headline_articles():
+                google_embed.add_field(name=article.title, value=f'[{article.source}]({article.url})', inline=False)
             await news_message.edit(embed=google_embed)
 
         elif emoji.name == "🎮":
-            d = feedparser.parse('https://gnn.gamer.com.tw/rss.xml')
-            title_list = [i.title for i in d.entries]
-            url_list = [i.link for i in d.entries]
-            gnn_embed = discord.Embed(title='巴哈姆特 GNN 新聞', description=(datetime.datetime.utcnow() + datetime.timedelta(hours=8)).strftime("%Y/%m/%d"), color=0x598ad9)
-            for title, url in zip(title_list[:5], url_list[:5]):
-                gnn_embed.add_field(name=title, value='[巴哈姆特](' + url + ')', inline=False)
+            gnn_embed = discord.Embed(title='巴哈姆特 GNN 新聞', description=today_taipei(), color=0x598ad9)
+            for article in get_headline_articles('https://gnn.gamer.com.tw/rss.xml'):
+                gnn_embed.add_field(name=article.title, value='[巴哈姆特](' + article.url + ')', inline=False)
             await news_message.edit(embed=gnn_embed)
 
         elif emoji.name == "🌤":
-            url = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-091?Authorization=' + weather_authorization
-            r = requests.get(url)
-            data = r.json()['records']['Locations'][0]['Location']
-            weather_embed = discord.Embed(title='天氣預報 ', description=(datetime.datetime.utcnow() + datetime.timedelta(hours=8)).strftime("%Y/%m/%d"), color=0x598ad9)
-            for loc_num, loc_name in zip([16, 19, 15, 17, 11], ['臺北', '臺中', '嘉義', '高雄', '花蓮']):
-                weather_data = data[loc_num]['WeatherElement']
-                temp = weather_data[0]['Time'][0]['ElementValue'][0]['Temperature']
-                rain = weather_data[11]['Time'][0]['ElementValue'][0]['ProbabilityOfPrecipitation']
-                weat = weather_data[12]['Time'][0]['ElementValue'][0]['Weather']
+            weather_embed = discord.Embed(title='天氣預報 ', description=today_taipei(), color=0x598ad9)
+            for loc_name, temp, rain, weat in get_weather_forecast_rows():
                 weather_embed.add_field(name=loc_name, value='☂' + rain + '%  🌡' + temp + '°C  ⛅' + weat, inline=False)
             await news_message.edit(embed=weather_embed)
 
@@ -1038,74 +943,51 @@ async def on_raw_reaction_add(payload):
 # [指令] 地震
 @bot.command()
 async def 地震(ctx, *args):
-    url = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore/E-A0015-001?Authorization=' + weather_authorization
-    eq_data = requests.get(url).json()
-    eq_content = eq_data['records']['Earthquake'][0]['ReportContent']
-    eq_image = eq_data['records']['Earthquake'][0]['ShakemapImageURI']
-    ed_url = eq_data['records']['Earthquake'][0]['Web']
-    embed = discord.Embed(title=eq_content, url=ed_url, color=0x636363)
-    embed.set_image(url=eq_image)
-    await ctx.send(embed=embed)
+    report = get_earthquake_report()
+    if report.web_url or report.image_url:
+        embed = discord.Embed(title=report.text, url=report.web_url, color=0x636363)
+        if report.image_url:
+            embed.set_image(url=report.image_url)
+        await ctx.send(embed=embed)
+    else:
+        await ctx.send(report.text)
+
+
+async def send_food_recommendation(ctx, result: FoodRecommendation):
+    if result.restaurant:
+        restaurant = result.restaurant
+        embed = discord.Embed(
+            title=restaurant.name,
+            description=(
+                '⭐' + str(restaurant.rating) +
+                '  👄' + str(restaurant.user_ratings_total) +
+                '  🕓' + str(restaurant.open_now) +
+                '  ' + '💵' * int(restaurant.price_level)
+            ),
+            url=result.maps_url
+        )
+        embed.set_author(name=(result.search_food or '推薦餐廳') + random.choice(FOOD_ENDINGS))
+        await ctx.send(embed=embed)
+        return
+    await ctx.send(result.message)
 
 
 # [指令] 午/晚餐吃什麼
 @bot.command(aliases=['午餐吃什麼'])
 async def 晚餐吃什麼(ctx, *args):
-    ending_list = ['怎麼樣?', '好吃', ' 98', '?', '']
     if len(args) == 0:
-        eat_dust = random.randint(1, 100)
-        if eat_dust <= 2:
-            await ctx.send('還是吃土?')
-        else:
-            eat_class = random.randint(1, 2)
-            if eat_class == 1:
-                await ctx.send(random.choice(FOOD_CHINESE) + random.choice(ending_list))
-            if eat_class == 2:
-                await ctx.send(random.choice(FOOD_JAPANESE + FOOD_AMERICAN) + random.choice(ending_list))
-    elif len(args) == 1 and '式' in args[0]:
+        await send_food_recommendation(ctx, get_food_recommendation("lunch" if ctx.invoked_with == "午餐吃什麼" else "dinner"))
+    elif len(args) == 1 and args[0] in ALLOWED_FOOD_CLASSES:
         food_class = args[0]
-        if food_class == '中式' or food_class == '台式':
-            await ctx.send(random.choice(FOOD_CHINESE) + random.choice(ending_list))
-        elif food_class == '日式':
-            await ctx.send(random.choice(FOOD_JAPANESE) + random.choice(ending_list))
-        elif food_class == '美式':
-            await ctx.send(random.choice(FOOD_AMERICAN) + random.choice(ending_list))
-        else:
-            await ctx.send('我不知道' + food_class + '料理有哪些，請輸入中/台式、日式或美式 º﹃º')
+        await send_food_recommendation(ctx, get_food_recommendation("lunch" if ctx.invoked_with == "午餐吃什麼" else "dinner", food_class=food_class))
+    elif len(args) == 1 and '式' in args[0]:
+        await ctx.send('我不知道' + args[0] + '料理有哪些，請輸入中/台式、日式或美式 º﹃º')
     elif len(args) == 1 and '式' not in args[0]:
-        search_food = random.choice(FOOD_JAPANESE + FOOD_AMERICAN + FOOD_CHINESE)
-        search_place = args[0]
-        try:
-            restaurant = googlemaps_search_food(search_food, search_place)
-            embed = discord.Embed(
-                title=restaurant[0],
-                description='⭐' + str(restaurant[2]) + '  👄' + str(restaurant[3]) + '  🕓' + str(restaurant[4]) + '  ' + '💵' * int(restaurant[5]),
-                url='https://www.google.com/maps/search/?api=1&query=' + search_food + '&query_place_id=' + restaurant[1]
-            )
-            embed.set_author(name=search_food + random.choice(ending_list))
-            await ctx.send(embed=embed)
-        except:
-            await ctx.send('在' + search_place + '找不到適合的' + search_food + '餐廳，請再重新輸入一遍或換個地點名稱><')
-    elif len(args) == 2 and ('中式' in args[0] or '台式' in args[0] or '日式' in args[0] or '美式' in args[0]):
+        await send_food_recommendation(ctx, get_food_recommendation("lunch" if ctx.invoked_with == "午餐吃什麼" else "dinner", location=args[0]))
+    elif len(args) == 2 and args[0] in ALLOWED_FOOD_CLASSES:
         food_class = args[0]
         search_place = args[1]
-        if food_class == '中式' or food_class == '台式':
-            search_food = random.choice(FOOD_CHINESE)
-        elif food_class == '日式':
-            search_food = random.choice(FOOD_JAPANESE)
-        elif food_class == '美式':
-            search_food = random.choice(FOOD_AMERICAN)
-        try:
-            restaurant = googlemaps_search_food(search_food, search_place)
-            embed = discord.Embed(
-                title=restaurant[0],
-                description='⭐' + str(restaurant[2]) + '  👄' + str(restaurant[3]) + '  🕓' + str(restaurant[4]) + '  ' + '💵' * int(restaurant[5]),
-                url='https://www.google.com/maps/search/?api=1&query=' + search_food + '&query_place_id=' + restaurant[1]
-            )
-            embed.set_author(name=search_food + random.choice(ending_list))
-            await ctx.send(embed=embed)
-        except:
-            await ctx.send('在' + search_place + '找不到適合的' + search_food + '餐廳，請再重新輸入一遍或換個地點名稱><')
+        await send_food_recommendation(ctx, get_food_recommendation("lunch" if ctx.invoked_with == "午餐吃什麼" else "dinner", food_class=food_class, location=search_place))
     else:
         await ctx.send('確認一下指令是否正確: ```午餐吃什麼 [中式/台式/日式/美式] [地點]``` 參數皆可省略')
 
@@ -1113,13 +995,8 @@ async def 晚餐吃什麼(ctx, *args):
 # [指令] 早餐吃什麼
 @bot.command()
 async def 早餐吃什麼(ctx, *args):
-    ending_list = ['怎麼樣?', '好吃', ' 98', '?', '']
     if len(args) == 0:
-        eat_dust = random.randint(1, 100)
-        if eat_dust < 2:
-            await ctx.send('早餐不要吃土，再骰一次!')
-        else:
-            await ctx.send(random.choice(FOOD_BREAKFAST) + random.choice(ending_list))
+        await send_food_recommendation(ctx, get_food_recommendation("breakfast"))
 
 
 # [NSFW指令] 色色
@@ -1527,4 +1404,5 @@ async def on_message(message):
 
 
 
+start_api_server_if_enabled()
 bot.run(Discord_token)

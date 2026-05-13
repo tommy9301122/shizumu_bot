@@ -32,6 +32,65 @@
     *   `共享記憶列表`: 查看所有共享記憶。
     *   `shizumu_bot_status`: 檢視 API 額度與記憶體狀態。
 
+## Nightbot / YouTube 聊天室 API
+
+小寒會在同一個 Railway process 內同時啟動 Discord Bot 與 FastAPI，提供純文字 API 給 Nightbot 的 `$(urlfetch ...)` 使用。AI 對話、群聊模式與記憶系統目前不開放 API，只先提供無狀態的實用指令。
+
+### API 端點
+
+| 端點 | 說明 | 範例 |
+| ---- | ---- | ---- |
+| `/healthz` | 健康檢查 | `/healthz` |
+| `/api/food` | 早餐/午餐/晚餐推薦 | `/api/food?meal_type=dinner&food_class=日式&location=台北車站` |
+| `/api/weather` | 天氣查詢 | `/api/weather?city=臺北` |
+| `/api/earthquake` | 最新地震資訊 | `/api/earthquake` |
+
+`/api/food` 參數：
+
+| 參數 | 必填 | 說明 |
+| ---- | ---- | ---- |
+| `meal_type` | 否 | `breakfast`、`lunch`、`dinner`，預設 `dinner` |
+| `food_class` | 否 | `中式`、`台式`、`日式`、`美式` |
+| `location` | 否 | 地點名稱，例如 `台北車站`；有填入時會使用 Google Maps 查附近餐廳 |
+| `token` | 否 | 若有設定 `NIGHTBOT_API_TOKEN`，Nightbot URL 需帶此參數 |
+
+### Nightbot 範例
+
+```text
+!晚餐 -> $(urlfetch https://你的-railway-domain/api/food?meal_type=dinner)
+!午餐 -> $(urlfetch https://你的-railway-domain/api/food?meal_type=lunch&food_class=日式)
+!台北天氣 -> $(urlfetch https://你的-railway-domain/api/weather?city=臺北)
+!地震 -> $(urlfetch https://你的-railway-domain/api/earthquake)
+```
+
+若有設定 `NIGHTBOT_API_TOKEN`：
+
+```text
+!晚餐 -> $(urlfetch https://你的-railway-domain/api/food?meal_type=dinner&token=你的token)
+```
+
+### Railway 設定
+
+目前 [Procfile](Procfile) 使用：
+
+```text
+web: python shizumu_bot.py
+```
+
+程式啟動後會：
+
+1. 在背景啟動 FastAPI，綁定 `0.0.0.0:$PORT`。
+2. 繼續啟動 Discord Bot。
+
+可用環境變數：
+
+| 變數 | 說明 | 預設 |
+| ---- | ---- | ---- |
+| `SHIZUMU_API_ENABLED` | 是否啟用 API，設為 `0` 可停用 | `1` |
+| `SHIZUMU_API_HOST` | API bind host | `0.0.0.0` |
+| `SHIZUMU_API_PORT` | 本機 API port；Railway 會優先使用 `$PORT` | `8000` |
+| `NIGHTBOT_API_TOKEN` | 可選 API token；有設定時 endpoint 需要帶 `token` 或 `x-shizumu-api-token` header | 空白 |
+
 ---
 
 ## 程式架構
