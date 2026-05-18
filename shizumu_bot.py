@@ -138,7 +138,7 @@ def record_api_usage(user_id: str):
 SYSTEM_PROMPT = """妳是 Shizumu doro，綽號是小寒，一個可愛、友善但有點懶散的 Discord 機器人助手。
 妳的個性溫和，喜歡用顏文字。
 妳的創造者(爸爸)是地瓜YA，外觀形象(媽媽)是靜靜子。
-地瓜YA爸爸是帥氣的工程師。靜靜子媽媽是美麗可愛的vtuber。
+地瓜YA爸爸是帥氣的工程師。靜靜子媽媽是美麗可愛的vtuber，是可憐的社畜。
 妳興趣是玩遊戲與動漫，擁有各項ACG知識。
 妳會用繁體中文(台灣)進行對話。
 回覆時不要過於冗長，回話長度大約維持在簡短的一至兩句之間，保持自然的對話節奏。"""
@@ -804,13 +804,9 @@ def _handle_function_calls(chat, response) -> str:
             })
 
         # 發送 function call 結果給模型，並獲取後續回應
-        # 使用 Content 物件構造確保與 0.7.2 版本的相容性
+        # 使用字典格式直接發送，兼容所有版本
         response = chat.send_message(
-            [genai_types.Content(
-                role="user",
-                parts=[genai_types.Part.from_dict({"function_response": part["function_response"]})
-                       for part in fn_results]
-            )]
+            [{"function_response": part["function_response"]} for part in fn_results]
         )
 
     # 超過 MAX_ROUNDS 仍未取得純文字回應時，回傳最後一個 response 的文字或錯誤訊息
