@@ -1,6 +1,7 @@
 # Discord Bot 核心套件
 discord.py==2.3.2
 python-dotenv>=1.1.0
+audioop-lts; python_version >= "3.13"
 
 # 現有功能依賴套件
 requests==2.31.0
@@ -8,6 +9,10 @@ nekos.py==1.0.3
 beautifulsoup4==4.12.3
 googlemaps==4.4.2
 feedparser==6.0.10
+
+# Nightbot / YouTube 聊天室 API 層
+fastapi>=0.111.0
+uvicorn>=0.30.0
 
 # Gemini AI 對話功能
 google-generativeai>=0.8.0

@@ -1,1 +1,1 @@
-worker: python shizumu_bot.py
+web: python shizumu_bot.py
