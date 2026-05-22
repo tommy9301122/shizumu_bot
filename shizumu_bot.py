@@ -49,7 +49,7 @@ SHIZUMU_API_PORT = int(os.getenv("PORT", os.getenv("SHIZUMU_API_PORT", "8000")))
 ADMIN_IDS = [378936265657286659, 343984138983964684]
 
 # 群聊模式啟用的頻道 ID（只有此頻道會啟用 channel-centric 記憶與被動回應）
-CHAT_CHANNEL_ID = int(os.getenv("SHIZUMU_CHAT_CHANNEL_ID", 0) or 0)
+CHAT_CHANNEL_ID = 1319351567421280387
 
 # ================================
 # 群聊行為參數
