@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import datetime
 import random
@@ -14,6 +15,7 @@ from dotenv import load_dotenv
 import discord
 from discord.ext import commands, tasks
 from discord.ext.commands import CommandNotFound
+from youtube_live import create_monitor
 import google.generativeai as genai
 from google.generativeai import types as genai_types
 from shizumu_bot_data import SHIZUMU_MURMUR, INTEREST_KEYWORDS
@@ -822,6 +824,7 @@ intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
 bot = commands.Bot(command_prefix='', intents=intents, help_command=None)
+youtube_live_monitor = None
 
 
 #################################################################################################################################################
@@ -864,6 +867,7 @@ async def activity_auto_change():
 # [啟動]
 @bot.event
 async def on_ready():
+    global youtube_live_monitor
     print('目前登入身份：', bot.user)
 
     if Google_AI_API_key:
@@ -877,7 +881,15 @@ async def on_ready():
         print("未設定 SHIZUMU_CHAT_CHANNEL_ID，群聊頻道模式停用")
 
     load_memories()
-    activity_auto_change.start()
+    if not activity_auto_change.is_running():
+        activity_auto_change.start()
+    if youtube_live_monitor is None:
+        try:
+            youtube_live_monitor = create_monitor(bot)
+        except Exception as error:
+            print(f"YouTube 直播監看初始化失敗：{type(error).__name__}")
+    if youtube_live_monitor is not None and not youtube_live_monitor.run.is_running():
+        youtube_live_monitor.run.start()
 
 
 # [新進成員]
@@ -1400,5 +1412,6 @@ async def on_message(message):
 
 
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 start_api_server_if_enabled()
 bot.run(Discord_token)

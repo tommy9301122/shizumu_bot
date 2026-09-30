@@ -1,1 +1,4 @@
 /.ipynb_checkpoints
+__pycache__/
+youtube_live.sqlite3*
+.env

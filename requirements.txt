@@ -1,5 +1,6 @@
 # Discord Bot 核心套件
 discord.py==2.3.2
+tzdata>=2024.1
 python-dotenv>=1.1.0
 audioop-lts; python_version >= "3.13"
 

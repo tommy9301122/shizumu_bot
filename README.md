@@ -93,112 +93,47 @@ web: python shizumu_bot.py
 
 ---
 
-## 程式架構
+## YouTube 直播通知
 
-|  層  | 行數範圍  | 職責 |
-|  ---- | ----  | ----  |
-| 設定 / 常數 | 1–185 | 環境變數、各種閾值、全域狀態變數 |
-| 用量限制 | 57–119 | 個人每日上限、冷卻、頻道每日上限 |
-| Gemini AI | 540–663 | get_gemini_response（個人）、get_gemini_channel_response（群聊） |
-| Function Calling | 664–869 | 工具定義、3 個工具執行函式、_handle_function_calls |
-| 記憶 | 187–437 | 持久化讀寫、共享/個人/頻道記憶、濃縮排程 |
-| Discord 指令 | 936–1,445 | 11 個指令、on_raw_reaction_add、on_member_join |
-| 訊息入口 | 1,142–1,514 | _handle_ai_chat、_handle_channel_chat、on_message |
+監看 `https://www.youtube.com/@shizumushizumu`，在 Discord 頻道 `1310279691382558771` 通知正在進行的直播：
 
-
-
-#### 流程圖
+```text
+@everyone 靜靜子直播開始了！晚餐們一起來看台:shizimu_heart:
+https://www.youtube.com/watch?v=直播影片ID
 ```
-graph TD
-    subgraph Entry["入口 / Discord 事件"]
-        OM[on_message]
-        ORA[on_raw_reaction_add]
-        OMJ[on_member_join]
-        OR[on_ready]
-    end
 
-    subgraph Commands["指令層（@bot.command）"]
-        C1[小寒 / shizumu_doro]
-        C2[新聞]
-        C3[地震]
-        C4[晚餐/午餐吃什麼]
-        C5[早餐吃什麼]
-        C6[色色 NSFW]
-        C7[重置記憶]
-        C8[add/list/clear 共享記憶]
-        C9[頻道記憶 / reset_channel]
-        C10[shizumu_bot_status]
-        C11[shizumu說]
-    end
+程式會使用目標伺服器中名稱為 `shizimu_heart` 且機器人可用的自訂表情；找不到時保留 `:shizimu_heart:` 文字。同一影片只通知一次；啟動時若已在直播且尚未通知，也會補發。尚未開始與已結束的直播不發送通知。
 
-    subgraph Handlers["處理器層"]
-        HAI[_handle_ai_chat\n個人記憶模式]
-        HCC[_handle_channel_chat\n群聊頻道模式]
-        HPR[_handle_passive_reactions\n問候/emoji]
-    end
+### 搜尋時間（台灣時間）
 
-    subgraph RateLimit["用量限制層"]
-        CAL[check_api_limit\n個人每日+冷卻]
-        CCL[check_channel_limit\n頻道每日]
-        RAU[record_api_usage]
-        RCU[record_channel_usage]
-    end
+| 日期 | 每分鐘搜尋時段（結束時間不包含） |
+| ---- | ---- |
+| 週一、二、三、五、日 | 20:45–22:00 |
+| 週六 | 18:45–20:00 |
+| 週四 | 無 |
 
-    subgraph GeminiLayer["Gemini AI 層（同步，走 executor）"]
-        GR[get_gemini_response\n個人對話]
-        GCR[get_gemini_channel_response\n群聊對話]
-        HFC[_handle_function_calls\nFunction Calling 迴圈]
-        BCC[build_channel_context\n組裝 history]
-    end
+其他時間每兩小時搜尋一次；當天成功通知後改為每兩小時搜尋。啟動會先補查，但距前次搜尋不足 60 秒時稍後再查。時段外臨時開台可能延遲最多約兩小時才被發現，短場直播可能漏掉，YouTube 搜尋索引也可能延遲。
 
-    subgraph Tools["Function Calling 工具"]
-        TF[get_food_recommendation]
-        TE[get_earthquake_info]
-        TW[get_weather_info]
-        GM[googlemaps_search_food]
-        TF --> GM
-    end
+每日最多使用 95 次 `search.list`（含啟動、失敗請求及分頁），以美國太平洋時間午夜重置並自動處理夏令時間。官方預設搜尋額度為每日 100 次；如果同一 Google Cloud 專案有其他使用者共用額度，可能提早耗盡。額度耗盡時暫停到下一配額日。參考 [YouTube 搜尋 API](https://developers.google.com/youtube/v3/docs/search/list)。
 
-    subgraph Memory["記憶層（持久化 memory.json）"]
-        LM[load_memories]
-        SM[save_memories\natom write + _memory_lock]
-        ASF[add_shared_fact]
-        SPS[save_personal_summary]
-        GPS[get_personal_summary]
-        GSMP[get_shared_memory_prompt]
-        subgraph ChannelMem["頻道記憶"]
-            RCM[_record_channel_message]
-            MSC[_maybe_summarize_channel_async\nasyncio.Lock + executor]
-            TSC[_try_summarize_channel\n同步 Gemini 呼叫]
-            SR[should_respond\n規則+機率]
-            MSC --> TSC
-        end
-        subgraph PersonalMem["個人記憶（per user）"]
-            CH["chat_histories\ndeque maxlen=24\n_chat_histories_lock"]
-        end
-    end
+### 設定與部署
 
-    OM -->|群聊頻道| RCM
-    OM -->|群聊頻道| SR
-    SR -->|should=True| HCC
-    OM -->|群聊頻道結尾| MSC
-    OM -->|bot自身訊息| RCM
-    OM -->|bot自身訊息| MSC
-    OM --> HPR
-    OM -->|mention| HAI
-    C1 --> HAI
-    HAI --> CAL
-    HAI --> GR
-    HAI -->|成功後| RAU
-    HCC --> CCL
-    HCC --> GCR
-    HCC -->|成功後| RCU
-    GR --> HFC
-    GCR --> BCC
-    GCR --> HFC
-    HFC --> TF
-    HFC --> TE
-    HFC --> TW
-    GR <-->|快照/寫回| CH
-    OR --> LM
+1. 在 Google Cloud 專案啟用 **YouTube Data API v3**，建立 API 金鑰並限制其只可使用該 API。無需登入 YouTube 頻道或取得頻道擁有者授權。
+2. 將金鑰設為 Railway 環境變數 `YOUTUBE_API_KEY`，不要寫入程式或 Git。此設定獨立於 Gemini 的金鑰。
+3. 掛載 Railway 持久化 Volume（例如 `/data`），將 `YOUTUBE_LIVE_STATE_PATH` 設為 `/data/youtube_live.sqlite3`。只執行一個 bot 實例；本機與 Railway 不要同時開啟直播通知，以免分別發送。
+4. 在通知頻道授予機器人「查看頻道」、「讀取訊息歷史」、「傳送訊息」、「提及 @everyone、@here 和所有身分組」權限。
+5. 安裝 `requirements.txt` 並依原本方式啟動。日誌會顯示缺少金鑰、權限不足、API 錯誤或通知成功等狀態。
+
+| 環境變數 | 說明 | 預設 |
+| ---- | ---- | ---- |
+| `YOUTUBE_API_KEY` | 已啟用 YouTube Data API v3 的 API 金鑰；缺少時停用監看 | 空白 |
+| `YOUTUBE_LIVE_ENABLED` | `0`、`false` 或 `no` 停用通知 | `1` |
+| `YOUTUBE_LIVE_STATE_PATH` | SQLite 狀態檔路徑，部署時應放持久化 Volume | `youtube_live.sqlite3` |
+
+SQLite 保存通知紀錄、搜尋次數與排程狀態。發送前也會核對該場開播後的機器人歷史訊息，協助處理「已發送但還沒存檔就中斷」的情況；無法讀取歷史時暫緩通知。不要刪除狀態檔或已發送的通知，以免失去去重依據。Discord 與資料庫無法共同交易，因此無法保證任何故障情境下都絕不重複；本功能以單一實例與歷史核對降低風險。
+
+測試（使用模擬 API 與 Discord，不發送真實訊息）：
+
+```text
+python -m unittest discover -s tests -v
 ```
