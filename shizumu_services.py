@@ -21,6 +21,7 @@ MealType = Literal["breakfast", "lunch", "dinner"]
 FOOD_ENDINGS = ['怎麼樣?', '好吃', ' 98', '?', '']
 ALLOWED_FOOD_CLASSES = {"中式", "台式", "日式", "美式"}
 CITY_INDEX_MAP = {"臺北": 16, "台北": 16, "臺中": 19, "台中": 19, "嘉義": 15, "高雄": 17, "花蓮": 11}
+FORECAST_CITIES = ((16, "臺北"), (19, "臺中"), (15, "嘉義"), (17, "高雄"), (11, "花蓮"))
 
 
 @dataclass
@@ -218,33 +219,38 @@ def get_earthquake_info_text() -> str:
     return report.text
 
 
+def _get_weather_locations() -> list[dict]:
+    url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-091?Authorization={weather_authorization}"
+    return requests.get(url, timeout=10).json()['records']['Locations'][0]['Location']
+
+
+def _weather_values(location: dict) -> tuple[str, str, str]:
+    weather_data = location['WeatherElement']
+    temperature = weather_data[0]['Time'][0]['ElementValue'][0]['Temperature']
+    rain = weather_data[11]['Time'][0]['ElementValue'][0]['ProbabilityOfPrecipitation']
+    weather = weather_data[12]['Time'][0]['ElementValue'][0]['Weather']
+    return temperature, rain, weather
+
+
 def get_weather_info_text(city: str = "臺北") -> str:
     city = (city or "臺北").strip()
     try:
-        url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-091?Authorization={weather_authorization}"
-        data = requests.get(url, timeout=10).json()['records']['Locations'][0]['Location']
+        locations = _get_weather_locations()
         loc_num = CITY_INDEX_MAP.get(city)
         if loc_num is None:
             loc_num = 16
             city = "臺北"
-        weather_data = data[loc_num]['WeatherElement']
-        temp = weather_data[0]['Time'][0]['ElementValue'][0]['Temperature']
-        rain = weather_data[11]['Time'][0]['ElementValue'][0]['ProbabilityOfPrecipitation']
-        weat = weather_data[12]['Time'][0]['ElementValue'][0]['Weather']
+        temp, rain, weat = _weather_values(locations[loc_num])
         return f"{city}天氣：{weat}，氣溫 {temp}°C，降雨機率 {rain}%"
     except Exception as exc:
         return f"查詢天氣失敗：{exc}"
 
 
 def get_weather_forecast_rows() -> list[tuple[str, str, str, str]]:
-    url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-091?Authorization={weather_authorization}"
-    data = requests.get(url, timeout=10).json()['records']['Locations'][0]['Location']
+    locations = _get_weather_locations()
     rows = []
-    for loc_num, loc_name in zip([16, 19, 15, 17, 11], ['臺北', '臺中', '嘉義', '高雄', '花蓮']):
-        weather_data = data[loc_num]['WeatherElement']
-        temp = weather_data[0]['Time'][0]['ElementValue'][0]['Temperature']
-        rain = weather_data[11]['Time'][0]['ElementValue'][0]['ProbabilityOfPrecipitation']
-        weat = weather_data[12]['Time'][0]['ElementValue'][0]['Weather']
+    for loc_num, loc_name in FORECAST_CITIES:
+        temp, rain, weat = _weather_values(locations[loc_num])
         rows.append((loc_name, temp, rain, weat))
     return rows
 

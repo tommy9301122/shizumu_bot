@@ -4,9 +4,7 @@ import os
 import datetime
 import random
 import json
-import pathlib
 import requests
-import tempfile
 import threading
 import time
 from collections import deque
@@ -17,8 +15,10 @@ from discord.ext import commands, tasks
 from discord.ext.commands import CommandNotFound
 from youtube_live import create_monitor
 import google.generativeai as genai
-from google.generativeai import types as genai_types
 from shizumu_bot_data import SHIZUMU_MURMUR, INTEREST_KEYWORDS
+from shizumu_gemini_tools import TOOLS as _TOOLS, handle_function_calls as _handle_function_calls
+from shizumu_limits import UsageLimits
+from shizumu_memory import MemoryStore, bigram_relevant as _bigram_relevant
 from shizumu_services import (
     ALLOWED_FOOD_CLASSES,
     FOOD_ENDINGS,
@@ -74,29 +74,25 @@ MAX_REQUESTS_PER_DAY = int(os.getenv("MAX_AI_REQUESTS_PER_DAY", 50))            
 COOLDOWN_SECONDS = int(os.getenv("AI_COOLDOWN_SECONDS", 5))                         # 每次請求冷卻秒數
 CHANNEL_MAX_AI_CALLS_PER_DAY = int(os.getenv("CHANNEL_MAX_AI_CALLS_PER_DAY", 300))  # 群聊頻道每日 AI 呼叫上限
 
-# 每位使用者的每日計數器：{ user_id: {"date": date, "count": int} }
-_user_api_usage: dict[str, dict] = {}
-# 每位使用者的上次請求時間：{ user_id: float }
-_last_request_time: dict[str, float] = {}
-# 群聊頻道每日 AI 用量
-_channel_ai_usage: dict = {"date": None, "count": 0}
+usage_limits = UsageLimits(
+    max_user_requests=MAX_REQUESTS_PER_DAY,
+    user_cooldown_seconds=COOLDOWN_SECONDS,
+    max_channel_requests=CHANNEL_MAX_AI_CALLS_PER_DAY,
+)
+
+# 保留原有狀態名稱，供狀態指令與既有整合程式使用。
+_user_api_usage = usage_limits.user_usage
+_last_request_time = usage_limits.last_request_time
+_channel_ai_usage = usage_limits.channel_usage
 
 
 def check_channel_limit() -> bool:
     """檢查群聊頻道 AI 呼叫的每日上限（與使用者配額無關）"""
-    today = datetime.date.today()
-    if _channel_ai_usage["date"] != today:
-        _channel_ai_usage["date"] = today
-        _channel_ai_usage["count"] = 0
-    return _channel_ai_usage["count"] < CHANNEL_MAX_AI_CALLS_PER_DAY
+    return usage_limits.check_channel()
 
 
 def record_channel_usage():
-    today = datetime.date.today()
-    if _channel_ai_usage["date"] != today:
-        _channel_ai_usage["date"] = today
-        _channel_ai_usage["count"] = 0
-    _channel_ai_usage["count"] += 1
+    usage_limits.record_channel()
 
 
 def check_api_limit(user_id: str) -> tuple[bool, str]:
@@ -104,33 +100,12 @@ def check_api_limit(user_id: str) -> tuple[bool, str]:
     檢查該使用者是否超過用量限制。
     回傳 (是否允許, 錯誤訊息)
     """
-    today = datetime.date.today()
-
-    # 初始化或每日重置
-    if user_id not in _user_api_usage or _user_api_usage[user_id]["date"] != today:
-        _user_api_usage[user_id] = {"date": today, "count": 0}
-
-    # 檢查每日個人上限
-    if _user_api_usage[user_id]["count"] >= MAX_REQUESTS_PER_DAY:
-        return False, f"你今天已經跟我聊了 {MAX_REQUESTS_PER_DAY} 次了，明天再來找我吧 (´・ω・`)"
-
-    # 檢查冷卻時間
-    last_time = _last_request_time.get(user_id, 0)
-    elapsed = time.time() - last_time
-    if elapsed < COOLDOWN_SECONDS:
-        remaining = int(COOLDOWN_SECONDS - elapsed) + 1
-        return False, f"請稍等 {remaining} 秒後再傳訊息喔 (｡･∀･)"
-
-    return True, ""
+    return usage_limits.check_user(user_id)
 
 
 def record_api_usage(user_id: str):
     """記錄一次 API 使用"""
-    today = datetime.date.today()
-    if user_id not in _user_api_usage or _user_api_usage[user_id]["date"] != today:
-        _user_api_usage[user_id] = {"date": today, "count": 0}
-    _user_api_usage[user_id]["count"] += 1
-    _last_request_time[user_id] = time.time()
+    usage_limits.record_user(user_id)
 
 
 # ================================
@@ -170,27 +145,23 @@ chat_histories: dict[str, deque] = {}
 
 # 並發保護鎖
 _chat_histories_lock = threading.Lock()
-_memory_lock = threading.Lock()
 
 # 個人摘要失敗冷卻：{ user_id: timestamp }
 _last_personal_summary_fail_at: dict[str, float] = {}
 PERSONAL_SUMMARY_FAIL_COOLDOWN = 60  # 秒
 
-# 持久化記憶檔案
-MEMORY_FILE = pathlib.Path("memory.json")
+memory_store = MemoryStore("memory.json", max_shared_facts=MAX_SHARED_FACTS)
 
-# 共享記憶（持久化）
-_shared_memory: dict = {"facts": [], "updated": ""}
-
-# 個人長期摘要（持久化）
-_personal_summaries: dict[str, dict] = {}
+# 保留原有狀態名稱，讓 Discord 狀態指令不必知道儲存實作細節。
+_shared_memory = memory_store.shared
+_personal_summaries = memory_store.personal
 
 # 頻道短期記憶（記憶體，僅針對 CHAT_CHANNEL_ID）
 # 每筆元素為 dict：{author_id, author_name, content, is_bot, timestamp}
 channel_history: deque = deque(maxlen=CHANNEL_HISTORY_MAXLEN)
 
 # 頻道長期摘要（持久化）
-_channel_summary: dict = {"summary": "", "updated": ""}
+_channel_summary = memory_store.channel
 
 # 群聊頻道被動回覆冷卻
 _last_channel_reply_time: float = 0.0
@@ -206,122 +177,32 @@ _channel_summary_async_lock: asyncio.Lock | None = None  # on_ready 時建立
 
 def load_memories():
     """Bot 啟動時從 JSON 載入所有持久化記憶"""
-    global _shared_memory, _personal_summaries, _channel_summary
-    if MEMORY_FILE.exists():
-        try:
-            raw = MEMORY_FILE.read_text(encoding="utf-8")
-            # 若檔案為空或只含空白，視為無效 JSON
-            if raw.strip():
-                data = json.loads(raw)
-            else:
-                raise json.JSONDecodeError("Empty memory file", raw, 0)
-        except (json.JSONDecodeError, OSError) as e:
-            # 檔案損毀、讀取失敗或 JSON 格式錯誤時，回退到預設記憶結構並記錄警告
-            print(f"[記憶][警告] 載入記憶檔失敗 ({e!r})，將使用預設記憶結構。")
-            _shared_memory = {"facts": [], "updated": ""}
-            _personal_summaries = {}
-            _channel_summary = {"summary": "", "updated": ""}
-            return
-        else:
-            _shared_memory = data.get("shared", {"facts": [], "updated": ""})
-            _personal_summaries = data.get("personal", {})
-            _channel_summary = data.get("channel", {"summary": "", "updated": ""})
-            print(
-                f"[記憶] 已載入共享記憶 {len(_shared_memory['facts'])} 條，"
-                f"個人摘要 {len(_personal_summaries)} 位，"
-                f"頻道摘要 {'有' if _channel_summary.get('summary') else '無'}"
-            )
-    else:
-        # 未找到記憶檔，保留預設結構
-        print("[記憶] 未找到記憶檔，將使用預設記憶結構。")
+    memory_store.load()
 
 
 def save_memories():
     """將記憶持久化寫入 JSON（atomic write + lock）"""
-    with _memory_lock:
-        data = {
-            "shared": _shared_memory,
-            "personal": _personal_summaries,
-            "channel": _channel_summary,
-        }
-        payload = json.dumps(data, ensure_ascii=False, indent=2)
-
-        target = MEMORY_FILE
-        target_dir = str(target.parent) if str(target.parent) else "."
-        tmp_fd, tmp_path = tempfile.mkstemp(
-            prefix=".memory.", suffix=".json.tmp", dir=target_dir
-        )
-        try:
-            with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
-                f.write(payload)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp_path, target)
-        except Exception:
-            try:
-                os.remove(tmp_path)
-            except OSError:
-                pass
-            raise
+    memory_store.save()
 
 
 def add_shared_fact(fact: str):
     """新增一條共享記憶，超過上限時移除最舊的"""
-    with _memory_lock:
-        _shared_memory["facts"].append(fact)
-        if len(_shared_memory["facts"]) > MAX_SHARED_FACTS:
-            _shared_memory["facts"].pop(0)
-        _shared_memory["updated"] = str(datetime.date.today())
-    save_memories()
-
-
-def _bigram_relevant(fact: str, user_message: str) -> bool:
-    """用 bigram 判斷共享記憶條目是否與使用者訊息相關"""
-    def bigrams(text: str) -> set:
-        return {text[i:i+2] for i in range(len(text) - 1)}
-    return bool(bigrams(fact) & bigrams(user_message))
+    memory_store.add_shared_fact(fact)
 
 
 def get_shared_memory_prompt(user_message: str = "") -> str:
     """將共享記憶組合成注入 prompt 的字串，若提供 user_message 則只注入相關條目"""
-    # 在鎖內快照，避免讀寫競態
-    with _memory_lock:
-        facts = list(_shared_memory["facts"])
-    if not facts:
-        return ""
-
-    if user_message:
-        selected = [f for f in facts if _bigram_relevant(f, user_message)]
-    else:
-        selected = facts
-
-    if not selected:
-        return ""
-
-    total = len(facts)
-    injected = len(selected)
-    facts_text = "\n".join(f"- {f}" for f in selected)
-    suffix = f"（已依相關性篩選 {injected}/{total} 條）" if user_message else f"（共 {total} 條）"
-    return f"【共享記憶：這是所有使用者共同建立的資訊{suffix}，請記住】\n{facts_text}"
+    return memory_store.shared_prompt(user_message)
 
 
 def save_personal_summary(user_id: str, summary: str):
     """儲存個人長期摘要；空字串會被拒絕，避免洗掉舊摘要"""
-    if not summary or not summary.strip():
-        print(f"[記憶][警告] 嘗試以空字串覆寫使用者 {user_id} 的個人摘要，已忽略。")
-        return
-    with _memory_lock:
-        _personal_summaries[user_id] = {
-            "summary": summary.strip(),
-            "updated": str(datetime.date.today())
-        }
-    save_memories()
+    memory_store.save_personal_summary(user_id, summary)
 
 
 def get_personal_summary(user_id: str) -> str | None:
     """取得個人長期摘要"""
-    with _memory_lock:
-        return _personal_summaries.get(user_id, {}).get("summary")
+    return memory_store.get_personal_summary(user_id)
 
 
 # ================================
@@ -442,9 +323,7 @@ def _try_summarize_channel():
     if len(summary_text) > 600:
         summary_text = summary_text[:600]
 
-    _channel_summary["summary"] = summary_text
-    _channel_summary["updated"] = str(datetime.date.today())
-    save_memories()
+    memory_store.set_channel_summary(summary_text)
 
     # 重置歷史，只保留最新 N 筆
     channel_history.clear()
@@ -678,151 +557,15 @@ def get_gemini_response(user_id: str, user_name: str, message: str, identity: st
 
 
 # ================================
-# Function Calling 工具定義
-# ================================
-
-_TOOLS = [{
-    "function_declarations": [
-        {
-            "name": "get_food_recommendation",
-            "description": "推薦餐點或餐廳。當使用者詢問吃什麼、推薦食物、早餐、午餐、晚餐時，呼叫此工具。",
-            "parameters": {
-                "type": "OBJECT",
-                "properties": {
-                    "meal_type": {
-                        "type": "STRING",
-                        "description": "餐别：breakfast（早餐）、lunch（午餐）、dinner（晚餐）"
-                    },
-                    "food_class": {
-                        "type": "STRING",
-                        "description": "料理類型：中式、台式、日式、美式，若使用者未主動指定則省略此參數。"
-                    },
-                    "location": {
-                        "type": "STRING",
-                        "description": "地點名稱，若使用者有明確指定地點才填入，例如：台北車站、公館，若無提及請直接省略。"
-                    }
-                },
-                "required": ["meal_type"]
-            }
-        },
-        {
-            "name": "get_earthquake_info",
-            "description": "取得最新地震資訊。當使用者詢問地震、有沒有在搖、有沒有地震時使用。",
-            "parameters": {
-                "type": "OBJECT",
-                "properties": {}
-            }
-        },
-        {
-            "name": "get_weather_info",
-            "description": "取得天氣預報。當使用者詢問天氣、下雨、溫度、要不要帶傘時使用。",
-            "parameters": {
-                "type": "OBJECT",
-                "properties": {
-                    "city": {
-                        "type": "STRING",
-                        "description": "城市名稱，例如：臺北、臺中、嘉義、高雄、花蓮，若未指定預設臺北"
-                    }
-                }
-            }
-        }
-    ]
-}]
-
-
-# ================================
-# Function Calling 執行邏輯
-# ================================
-
-def _execute_get_food_recommendation(meal_type: str, food_class: str = None, location: str = None) -> str:
-    return get_food_recommendation_text(meal_type, food_class, location)
-
-
-def _execute_get_earthquake_info() -> str:
-    return get_earthquake_info_text()
-
-
-def _execute_get_weather_info(city: str = "臺北") -> str:
-    return get_weather_info_text(city)
-
-
-_TOOL_HANDLERS = {
-    "get_food_recommendation": lambda args: _execute_get_food_recommendation(**args),
-    "get_earthquake_info":     lambda args: _execute_get_earthquake_info(),
-    "get_weather_info":        lambda args: _execute_get_weather_info(**args),
-}
-
-
-def _handle_function_calls(chat, response) -> str:
-    """
-    處理 Gemini 的 Function Call 回應。
-    Gemini 可能連續要求多次 function call，迴圈處理直到得到純文字回覆。
-    如果 Gemini 回應被安全機制阻擋或沒有候選，會回傳可讀錯誤訊息，
-    而不是直接觸發 IndexError/AttributeError。
-    """
-    MAX_ROUNDS = 5
-
-    for _ in range(MAX_ROUNDS):
-        # 防禦性檢查：確保有候選與內容可用
-        candidates = getattr(response, "candidates", None)
-        if not candidates:
-            fallback_text = getattr(response, "text", None)
-            return fallback_text or "無法取得模型回應（候選結果為空或缺失）。"
-
-        first_candidate = candidates[0]
-        content = getattr(first_candidate, "content", None)
-        parts = getattr(content, "parts", None) if content is not None else None
-        if not parts:
-            fallback_text = getattr(response, "text", None)
-            return fallback_text or "無法取得模型回應內容（content.parts 為空或缺失）。"
-
-        fn_calls = [
-            part.function_call
-            for part in parts
-            if hasattr(part, "function_call") and part.function_call.name
-        ]
-
-        if not fn_calls:
-            fallback_text = getattr(response, "text", None)
-            return fallback_text or "未偵測到可用的函式呼叫，且無可用文字回覆。"
-
-        fn_results = []
-        for fn_call in fn_calls:
-            fn_name = fn_call.name
-            fn_args = dict(fn_call.args)
-            print(f"[Function Call] {fn_name}({fn_args})")
-
-            handler = _TOOL_HANDLERS.get(fn_name)
-            result = handler(fn_args) if handler else f"未知的工具：{fn_name}"
-            print(f"[Function Result] {result}")
-
-            # 構造 function response 物件（相容於 0.7.2 版本）
-            # 使用字典格式而非 Part.from_function_response() 以避免 AttributeError
-            fn_results.append({
-                "function_response": {
-                    "name": fn_name,
-                    "response": {"result": result}
-                }
-            })
-
-        # 發送 function call 結果給模型，並獲取後續回應
-        # 使用字典格式直接發送，兼容所有版本
-        response = chat.send_message(
-            [{"function_response": part["function_response"]} for part in fn_results]
-        )
-
-    # 超過 MAX_ROUNDS 仍未取得純文字回應時，回傳最後一個 response 的文字或錯誤訊息
-    fallback_text = getattr(response, "text", None)
-    return fallback_text or "反覆處理函式呼叫後仍無法取得模型文字回應。"
-
-
-# ================================
 # Discord Bot 設定
 # ================================
 
 intents = discord.Intents.default()
 intents.members = True
-intents.message_content = True
+# discord.py 2.x exposes this privileged intent; 1.x delivers messages through
+# its existing message intents and has no assignable message_content attribute.
+if hasattr(intents, "message_content"):
+    intents.message_content = True
 bot = commands.Bot(command_prefix='', intents=intents, help_command=None)
 youtube_live_monitor = None
 
@@ -1024,6 +767,15 @@ async def 色色(ctx):
 # Gemini AI 對話
 # ================================
 
+async def _send_message_chunks(destination, content: str) -> None:
+    """Send text without exceeding Discord's 2,000-character limit."""
+    chunks = [content] if len(content) <= 2000 else [
+        content[index:index + 2000] for index in range(0, len(content), 2000)
+    ]
+    for chunk in chunks:
+        await destination.send(chunk)
+
+
 async def _handle_ai_chat(ctx, message_content: str):
     """處理 AI 對話的核心邏輯"""
     if not Google_AI_API_key:
@@ -1053,11 +805,7 @@ async def _handle_ai_chat(ctx, message_content: str):
             # 成功取得回覆才記一次配額 / cooldown
             record_api_usage(user_id)
 
-            if len(reply) > 2000:
-                for chunk in [reply[i:i+2000] for i in range(0, len(reply), 2000)]:
-                    await ctx.send(chunk)
-            else:
-                await ctx.send(reply)
+            await _send_message_chunks(ctx, reply)
 
         except Exception as e:
             print(f"AI 對話錯誤: {e}")
@@ -1101,11 +849,7 @@ async def _handle_channel_chat(message: discord.Message):
             _last_channel_reply_time = time.time()
 
             # 寫入頻道由 on_message 中 bot self branch 統一處理，這裡不重複記錄
-            if len(reply) > 2000:
-                for chunk in [reply[i:i+2000] for i in range(0, len(reply), 2000)]:
-                    await message.channel.send(chunk)
-            else:
-                await message.channel.send(reply)
+            await _send_message_chunks(message.channel, reply)
     except Exception as e:
         print(f"[群聊 AI] 錯誤：{e}")
 
@@ -1131,12 +875,10 @@ async def reset_memory(ctx):
     """清除您與小寒的對話歷史（包含持久化的個人摘要）"""
     user_id = str(ctx.author.id)
     cleared = []
-    if user_id in chat_histories:
-        chat_histories.pop(user_id)
-        cleared.append("短期對話歷史")
-    if user_id in _personal_summaries:
-        _personal_summaries.pop(user_id)
-        save_memories()
+    with _chat_histories_lock:
+        if chat_histories.pop(user_id, None) is not None:
+            cleared.append("短期對話歷史")
+    if memory_store.remove_personal_summary(user_id):
         cleared.append("個人長期摘要")
     if cleared:
         await ctx.send(f"已清除：{'、'.join(cleared)}，下次聊天將重新開始 (｡･∀･)ﾉﾞ")
@@ -1209,16 +951,12 @@ async def clear_shared_memory(ctx, index: int = None):
         if index < 1 or index > total:
             await ctx.send(f"編號不正確喔，請輸入 1 ~ {total} 之間的數字 (´・ω・`)")
             return
-        removed = _shared_memory["facts"].pop(index - 1)
-        _shared_memory["updated"] = str(datetime.date.today())
-        save_memories()
+        removed = memory_store.remove_shared_fact(index - 1)
         await ctx.send(f"已刪除第 #{index} 條共享記憶：「{removed}」(｡･∀･)ﾉﾞ\n剩餘 {len(_shared_memory['facts'])} 條")
 
     # 未傳編號：清除全部
     else:
-        _shared_memory["facts"].clear()
-        _shared_memory["updated"] = str(datetime.date.today())
-        save_memories()
+        memory_store.clear_shared_facts()
         await ctx.send("已清除所有共享記憶 (｡･∀･)ﾉﾞ")
 
 
@@ -1256,9 +994,7 @@ async def reset_channel_memory(ctx):
         await ctx.send("只有管理員才能清除頻道記憶喔 (´・ω・`)")
         return
     channel_history.clear()
-    _channel_summary["summary"] = ""
-    _channel_summary["updated"] = ""
-    save_memories()
+    memory_store.clear_channel_summary()
     await ctx.send("已清除群聊頻道的所有記憶 (｡･∀･)ﾉﾞ")
 
 
@@ -1412,6 +1148,12 @@ async def on_message(message):
 
 
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-start_api_server_if_enabled()
-bot.run(Discord_token)
+def main() -> None:
+    """Start the HTTP endpoint and Discord bot process."""
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    start_api_server_if_enabled()
+    bot.run(Discord_token)
+
+
+if __name__ == "__main__":
+    main()
