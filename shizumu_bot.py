@@ -1113,6 +1113,14 @@ async def on_message(message):
         # 1. 不論是否回應，都先記入頻道歷史
         _record_channel_message(message, is_bot=False)
 
+        # 點名指令在群聊只走頻道上下文，避免再執行個人對話而重複回覆。
+        # 使用指令解析結果，讓英文別名也遵循相同路徑。
+        ctx = await bot.get_context(message)
+        if ctx.command is 小寒:
+            await _handle_channel_chat(message)
+            await _maybe_summarize_channel_async()
+            return
+
         # 2. 決策是否回應
         should, reason = should_respond(message)
         if should:
