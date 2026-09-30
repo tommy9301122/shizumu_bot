@@ -170,10 +170,10 @@ class LiveMonitor:
             if message.author.id == self.bot.user.id and url in message.content.split():
                 self.state.finish(video_id, message.id, message.created_at)
                 return
-        emoji = discord.utils.get(channel.guild.emojis, name="shizimu_heart")
-        heart = str(emoji) if emoji and emoji.is_usable() else ":shizimu_heart:"
+        emoji = discord.utils.get(channel.guild.emojis, name="shizumu_splash")
+        splash = str(emoji) if emoji and emoji.is_usable() else ":shizumu_splash:"
         message = await channel.send(
-            f"@everyone 靜靜子直播開始了！晚餐們一起來看台{heart}\n{url}",
+            f"@everyone 靜靜子直播開始了！晚餐們一起來看台{splash}\n{url}",
             allowed_mentions=discord.AllowedMentions(everyone=True, users=False, roles=False,
                                                      replied_user=False),
         )

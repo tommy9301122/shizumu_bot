@@ -99,7 +99,7 @@ class MonitorTests(unittest.IsolatedAsyncioTestCase):
         await self.monitor.tick(self.now)
         self.channel.send.assert_awaited_once()
         args = self.channel.send.call_args
-        self.assertEqual(args.args[0], "@everyone 靜靜子直播開始了！晚餐們一起來看台:shizimu_heart:\nhttps://www.youtube.com/watch?v=video1")
+        self.assertEqual(args.args[0], "@everyone 靜靜子直播開始了！晚餐們一起來看台:shizumu_splash:\nhttps://www.youtube.com/watch?v=video1")
         mentions = args.kwargs["allowed_mentions"].to_dict()
         self.assertEqual(mentions["parse"], ["everyone"])
         self.bot.get_channel.assert_called_with(DESTINATION)
@@ -111,12 +111,12 @@ class MonitorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_custom_emoji(self):
         emoji = Mock(name="emoji")
-        emoji.name = "shizimu_heart"
+        emoji.name = "shizumu_splash"
         emoji.is_usable.return_value = True
-        emoji.__str__ = Mock(return_value="<:shizimu_heart:12345>")
+        emoji.__str__ = Mock(return_value="<:shizumu_splash:12345>")
         self.channel.guild.emojis = [emoji]
         await self.monitor.tick(self.now)
-        self.assertIn("<:shizimu_heart:12345>", self.channel.send.call_args.args[0])
+        self.assertIn("<:shizumu_splash:12345>", self.channel.send.call_args.args[0])
 
     async def test_no_results_upcoming_ended_or_other_channel(self):
         self.monitor.api_call = AsyncMock(return_value={"items": []})

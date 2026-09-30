@@ -98,11 +98,11 @@ web: python shizumu_bot.py
 監看 `https://www.youtube.com/@shizumushizumu`，在 Discord 頻道 `1310279691382558771` 通知正在進行的直播：
 
 ```text
-@everyone 靜靜子直播開始了！晚餐們一起來看台:shizimu_heart:
+@everyone 靜靜子直播開始了！晚餐們一起來看台:shizumu_splash:
 https://www.youtube.com/watch?v=直播影片ID
 ```
 
-程式會使用目標伺服器中名稱為 `shizimu_heart` 且機器人可用的自訂表情；找不到時保留 `:shizimu_heart:` 文字。同一影片只通知一次；啟動時若已在直播且尚未通知，也會補發。尚未開始與已結束的直播不發送通知。
+程式會使用目標伺服器中名稱為 `shizumu_splash` 且機器人可用的自訂表情；找不到時保留 `:shizumu_splash:` 文字。同一影片只通知一次；啟動時若已在直播且尚未通知，也會補發。尚未開始與已結束的直播不發送通知。
 
 ### 搜尋時間（台灣時間）
 
