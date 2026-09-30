@@ -2,3 +2,5 @@
 __pycache__/
 youtube_live.sqlite3*
 .env
+memory.json
+.memory.*.json.tmp

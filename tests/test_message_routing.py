@@ -1,5 +1,6 @@
 import unittest
-from collections import deque
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -8,13 +9,17 @@ import shizumu_bot as app
 
 class MessageRoutingTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.history = deque(maxlen=30)
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        store = app.MemoryStore(Path(directory.name) / "memory.json")
+        self.history = store.channel_history
         self.channel_chat = AsyncMock()
         self.process_commands = AsyncMock()
         self.passive = AsyncMock()
         self.summarize = AsyncMock()
         self.should_respond = Mock(return_value=(True, "name_called"))
         patches = [
+            patch.object(app, "memory_store", store),
             patch.object(app, "Google_AI_API_key", "test-key"),
             patch.object(app, "channel_history", self.history),
             patch.object(app, "_channel_summary", {"summary": "先前大家決定週末聚餐"}),

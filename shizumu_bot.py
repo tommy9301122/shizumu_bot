@@ -141,16 +141,23 @@ PERSONAL_HISTORY_MAXLEN = SUMMARY_THRESHOLD * 2 + PERSONAL_HISTORY_SAFE_BUFFER
 MAX_SHARED_FACTS = 50  # 共享記憶的最大條數，超過時會刪除最舊的
 
 # 短期對話歷史（記憶體）
-chat_histories: dict[str, deque] = {}
+SHIZUMU_MEMORY_PATH = os.getenv("SHIZUMU_MEMORY_PATH", "memory.json")
+memory_store = MemoryStore(
+    SHIZUMU_MEMORY_PATH, max_shared_facts=MAX_SHARED_FACTS,
+    personal_history_maxlen=PERSONAL_HISTORY_MAXLEN,
+    channel_history_maxlen=CHANNEL_HISTORY_MAXLEN,
+)
+chat_histories = memory_store.chat_histories
 
 # 並發保護鎖
-_chat_histories_lock = threading.Lock()
+_chat_histories_lock = memory_store.lock
 
 # 個人摘要失敗冷卻：{ user_id: timestamp }
 _last_personal_summary_fail_at: dict[str, float] = {}
 PERSONAL_SUMMARY_FAIL_COOLDOWN = 60  # 秒
 
-memory_store = MemoryStore("memory.json", max_shared_facts=MAX_SHARED_FACTS)
+_memories_loaded = False
+_channel_memory_generation = 0
 
 # 保留原有狀態名稱，讓 Discord 狀態指令不必知道儲存實作細節。
 _shared_memory = memory_store.shared
@@ -158,7 +165,7 @@ _personal_summaries = memory_store.personal
 
 # 頻道短期記憶（記憶體，僅針對 CHAT_CHANNEL_ID）
 # 每筆元素為 dict：{author_id, author_name, content, is_bot, timestamp}
-channel_history: deque = deque(maxlen=CHANNEL_HISTORY_MAXLEN)
+channel_history = memory_store.channel_history
 
 # 頻道長期摘要（持久化）
 _channel_summary = memory_store.channel
@@ -177,7 +184,14 @@ _channel_summary_async_lock: asyncio.Lock | None = None  # on_ready 時建立
 
 def load_memories():
     """Bot 啟動時從 JSON 載入所有持久化記憶"""
-    memory_store.load()
+    global _memories_loaded, _channel_summary_pending
+    with memory_store.lock:
+        if _memories_loaded:
+            return
+        memory_store.load()
+        _channel_summary_pending = len(channel_history) >= CHANNEL_SUMMARY_THRESHOLD
+        _memories_loaded = True
+        logging.info("Memory path: %s", memory_store.path.resolve())
 
 
 def save_memories():
@@ -238,13 +252,14 @@ def _record_channel_message(message: discord.Message, is_bot: bool):
     if not content:
         return
 
-    channel_history.append({
-        "author_id": str(message.author.id),
-        "author_name": message.author.display_name,
-        "content": content[:300],  # 限長避免單則訊息撐爆上下文
-        "is_bot": is_bot,
-        "timestamp": _now_hhmm(),
-    })
+    with memory_store.transaction():
+        channel_history.append({
+            "author_id": str(message.author.id),
+            "author_name": message.author.display_name,
+            "content": content[:300],  # 限長避免單則訊息撐爆上下文
+            "is_bot": is_bot,
+            "timestamp": _now_hhmm(),
+        })
 
     # 只標記，交給背景任務出去跑
     if len(channel_history) >= CHANNEL_SUMMARY_THRESHOLD:
@@ -274,14 +289,17 @@ def _try_summarize_channel():
     """將頻道短期歷史中較舊的部分濃縮進 _channel_summary，保留最新 N 筆。"""
     if not Google_AI_API_key:
         return
-    if len(channel_history) < CHANNEL_SUMMARY_THRESHOLD:
+    with memory_store.lock:
+        snapshot = list(channel_history)
+        generation = _channel_memory_generation
+        existing = _channel_summary.get("summary", "")
+    if len(snapshot) < CHANNEL_SUMMARY_THRESHOLD:
         return
 
     # 切出要被濃縮的舊訊息
-    older = list(channel_history)[: len(channel_history) - CHANNEL_SUMMARY_KEEP]
+    older = snapshot[:-CHANNEL_SUMMARY_KEEP]
     if not older:
         return
-    newer = list(channel_history)[len(channel_history) - CHANNEL_SUMMARY_KEEP:]
 
     lines = []
     for m in older:
@@ -289,7 +307,6 @@ def _try_summarize_channel():
         lines.append(f"[{m['timestamp']}] {speaker}：{m['content']}")
     script = "\n".join(lines)
 
-    existing = _channel_summary.get("summary", "")
     if existing:
         prompt = (
             "【系統指令】以下是這個 Discord 群聊頻道的舊摘要與最新對話腳本。\n"
@@ -323,13 +340,17 @@ def _try_summarize_channel():
     if len(summary_text) > 600:
         summary_text = summary_text[:600]
 
-    memory_store.set_channel_summary(summary_text)
-
-    # 重置歷史，只保留最新 N 筆
-    channel_history.clear()
-    for m in newer:
-        channel_history.append(m)
-    print(f"[頻道記憶] 已濃縮，摘要長度 {len(summary_text)} 字，保留最新 {len(newer)} 筆")
+    with memory_store.lock:
+        if generation != _channel_memory_generation:
+            return
+        with memory_store.transaction():
+            # 只移除本次已摘要的訊息，保留生成期間抵達的新訊息。
+            summarized_ids = {id(item) for item in older}
+            remaining = [item for item in channel_history if id(item) not in summarized_ids]
+            channel_history.clear()
+            channel_history.extend(remaining)
+            _channel_summary.update(summary=summary_text, updated=str(datetime.date.today()))
+    print(f"[頻道記憶] 已濃縮，摘要長度 {len(summary_text)} 字，保留最新 {len(remaining)} 筆")
 
 def should_respond(message: discord.Message) -> tuple[bool, str]:
     """
@@ -392,7 +413,9 @@ def build_channel_context(target_message: dict) -> list[dict]:
         injected.append({"role": "model", "parts": "好的，我記住這些共享資訊了 (｡･∀･)"})
 
     # 2. 頻道長期摘要
-    summary_text = _channel_summary.get("summary", "")
+    with memory_store.lock:
+        summary_text = _channel_summary.get("summary", "")
+        recent_history = list(channel_history)
     if summary_text:
         injected.append({
             "role": "user",
@@ -401,9 +424,9 @@ def build_channel_context(target_message: dict) -> list[dict]:
         injected.append({"role": "model", "parts": "嗯嗯我記得這個頻道的氛圍 (｡･∀･)"})
 
     # 3. 頻道近期訊息（腳本格式）
-    if channel_history:
+    if recent_history:
         lines = []
-        for m in channel_history:
+        for m in recent_history:
             speaker = "你（小寒）" if m["is_bot"] else m["author_name"]
             lines.append(f"[{m['timestamp']}] {speaker}：{m['content']}")
         script = "【目前群聊頻道的最近對話】\n" + "\n".join(lines)
@@ -451,7 +474,9 @@ def get_gemini_response(user_id: str, user_name: str, message: str, identity: st
     with _chat_histories_lock:
         if user_id not in chat_histories:
             chat_histories[user_id] = deque(maxlen=PERSONAL_HISTORY_MAXLEN)
-        history_snapshot = list(chat_histories[user_id])
+        original_history = chat_histories[user_id]
+        history_snapshot = list(original_history)
+        original_items = list(original_history)
 
     # 2. 觸發個人記憶濃縮（用 snapshot 計算，不直接動共用 deque）
     summarized_history: list | None = None  # 若濃縮成功，這份取代原本 deque 的內容
@@ -495,7 +520,9 @@ def get_gemini_response(user_id: str, user_name: str, message: str, identity: st
                 if len(summary_text) > 500:
                     summary_text = summary_text[:500]
 
-                save_personal_summary(user_id, summary_text)
+                with memory_store.lock:
+                    if chat_histories.get(user_id) is original_history:
+                        save_personal_summary(user_id, summary_text)
 
                 # 構造新的歷史：摘要 + 「正在進行的本輪」之前還沒處理
                 summarized_history = [
@@ -545,13 +572,18 @@ def get_gemini_response(user_id: str, user_name: str, message: str, identity: st
 
     # 6. 寫回短期記憶（在鎖內）；若有濃縮就以 summarized_history 重建 deque
     with _chat_histories_lock:
-        dq = chat_histories.setdefault(user_id, deque(maxlen=PERSONAL_HISTORY_MAXLEN))
-        if summarized_history is not None:
-            dq.clear()
-            for item in summarized_history:
-                dq.append(item)
-        dq.append({"role": "user", "parts": full_message})
-        dq.append({"role": "model", "parts": reply})
+        # 重置後不讓尚未完成的 AI 請求復活舊記憶。
+        if chat_histories.get(user_id) is original_history:
+            with memory_store.transaction():
+                dq = original_history
+                if summarized_history is not None:
+                    old_ids = {id(item) for item in original_items}
+                    new_items = [item for item in dq if id(item) not in old_ids]
+                    dq.clear()
+                    dq.extend(summarized_history)
+                    dq.extend(new_items)
+                dq.append({"role": "user", "parts": full_message})
+                dq.append({"role": "model", "parts": reply})
 
     return reply
 
@@ -875,11 +907,15 @@ async def reset_memory(ctx):
     """清除您與小寒的對話歷史（包含持久化的個人摘要）"""
     user_id = str(ctx.author.id)
     cleared = []
-    with _chat_histories_lock:
-        if chat_histories.pop(user_id, None) is not None:
-            cleared.append("短期對話歷史")
-    if memory_store.remove_personal_summary(user_id):
-        cleared.append("個人長期摘要")
+    try:
+        with memory_store.transaction():
+            if chat_histories.pop(user_id, None) is not None:
+                cleared.append("短期對話歷史")
+            if _personal_summaries.pop(user_id, None) is not None:
+                cleared.append("個人長期摘要")
+    except OSError:
+        await ctx.send("記憶檔儲存失敗，未完成重置，請稍後再試。")
+        return
     if cleared:
         await ctx.send(f"已清除：{'、'.join(cleared)}，下次聊天將重新開始 (｡･∀･)ﾉﾞ")
     else:
@@ -990,11 +1026,20 @@ async def channel_memory_status(ctx):
 @bot.command(aliases=['重置頻道記憶'])
 async def reset_channel_memory(ctx):
     """清除群聊頻道的短期歷史與長期摘要（限管理員）"""
+    global _channel_memory_generation, _channel_summary_pending
     if ctx.author.id not in ADMIN_IDS:
         await ctx.send("只有管理員才能清除頻道記憶喔 (´・ω・`)")
         return
-    channel_history.clear()
-    memory_store.clear_channel_summary()
+    try:
+        with memory_store.lock:
+            with memory_store.transaction():
+                channel_history.clear()
+                _channel_summary.update(summary="", updated="")
+            _channel_memory_generation += 1
+            _channel_summary_pending = False
+    except OSError:
+        await ctx.send("記憶檔儲存失敗，未完成重置，請稍後再試。")
+        return
     await ctx.send("已清除群聊頻道的所有記憶 (｡･∀･)ﾉﾞ")
 
 

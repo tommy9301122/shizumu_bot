@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import datetime
 import json
+import logging
 import os
 import pathlib
 import tempfile
 import threading
+from collections import deque
 from collections.abc import Callable
+from contextlib import contextmanager
+from copy import deepcopy
 
 
 def bigram_relevant(fact: str, user_message: str) -> bool:
@@ -29,11 +33,16 @@ class MemoryStore:
         max_shared_facts: int = 50,
         *,
         today: Callable[[], datetime.date] = datetime.date.today,
+        personal_history_maxlen: int = 24,
+        channel_history_maxlen: int = 30,
     ) -> None:
         self.path = pathlib.Path(path)
         self.max_shared_facts = max_shared_facts
         self._today = today
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self.personal_history_maxlen = personal_history_maxlen
+        self.chat_histories: dict[str, deque] = {}
+        self.channel_history: deque = deque(maxlen=channel_history_maxlen)
         # These dictionaries retain their identity so callers may safely keep a
         # reference while load() refreshes their contents.
         self.shared: dict = {"facts": [], "updated": ""}
@@ -47,6 +56,38 @@ class MemoryStore:
         self.personal.update(data.get("personal", {}))
         self.channel.clear()
         self.channel.update(data.get("channel", {"summary": "", "updated": ""}))
+        self.chat_histories.clear()
+        self.chat_histories.update({
+            user_id: deque(history, maxlen=self.personal_history_maxlen)
+            for user_id, history in data.get("chat_histories", {}).items()
+        })
+        self.channel_history.clear()
+        self.channel_history.extend(data.get("channel_history", []))
+
+    @property
+    def lock(self):
+        return self._lock
+
+    def _state(self) -> dict:
+        return {
+            "shared": self.shared,
+            "personal": self.personal,
+            "channel": self.channel,
+            "chat_histories": {key: list(value) for key, value in self.chat_histories.items()},
+            "channel_history": list(self.channel_history),
+        }
+
+    @contextmanager
+    def transaction(self):
+        """Serialize mutation and disk commit; restore live state on failure."""
+        with self._lock:
+            before = deepcopy(self._state())
+            try:
+                yield
+                self.save()
+            except Exception:
+                self._replace_state(before)
+                raise
 
     def load(self) -> None:
         """Load state from disk, falling back to empty state for invalid files."""
@@ -79,51 +120,46 @@ class MemoryStore:
     def save(self) -> None:
         """Write the current state using an atomic file replacement."""
         with self._lock:
-            data = {
-                "shared": self.shared,
-                "personal": self.personal,
-                "channel": self.channel,
-            }
-            payload = json.dumps(data, ensure_ascii=False, indent=2)
-
             target_dir = str(self.path.parent) if str(self.path.parent) else "."
-            temp_fd, temp_path = tempfile.mkstemp(
-                prefix=".memory.", suffix=".json.tmp", dir=target_dir
-            )
+            temp_path = None
             try:
+                payload = json.dumps(self._state(), ensure_ascii=False, indent=2)
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                temp_fd, temp_path = tempfile.mkstemp(
+                    prefix=".memory.", suffix=".json.tmp", dir=target_dir
+                )
                 with os.fdopen(temp_fd, "w", encoding="utf-8") as file:
                     file.write(payload)
                     file.flush()
                     os.fsync(file.fileno())
                 os.replace(temp_path, self.path)
             except Exception:
+                logging.exception("Memory save failed: %s", self.path)
                 try:
-                    os.remove(temp_path)
+                    if temp_path is not None:
+                        os.remove(temp_path)
                 except OSError:
                     pass
                 raise
 
     def add_shared_fact(self, fact: str) -> None:
-        with self._lock:
+        with self.transaction():
             self.shared["facts"].append(fact)
             if len(self.shared["facts"]) > self.max_shared_facts:
                 self.shared["facts"].pop(0)
             self.shared["updated"] = str(self._today())
-        self.save()
 
     def remove_shared_fact(self, index: int) -> str:
         """Remove and return a fact by zero-based index."""
-        with self._lock:
+        with self.transaction():
             removed = self.shared["facts"].pop(index)
             self.shared["updated"] = str(self._today())
-        self.save()
         return removed
 
     def clear_shared_facts(self) -> None:
-        with self._lock:
+        with self.transaction():
             self.shared["facts"].clear()
             self.shared["updated"] = str(self._today())
-        self.save()
 
     def shared_prompt(self, user_message: str = "") -> str:
         with self._lock:
@@ -149,33 +185,28 @@ class MemoryStore:
         if not summary or not summary.strip():
             print(f"[記憶][警告] 嘗試以空字串覆寫使用者 {user_id} 的個人摘要，已忽略。")
             return
-        with self._lock:
+        with self.transaction():
             self.personal[user_id] = {
                 "summary": summary.strip(),
                 "updated": str(self._today()),
             }
-        self.save()
 
     def get_personal_summary(self, user_id: str) -> str | None:
         with self._lock:
             return self.personal.get(user_id, {}).get("summary")
 
     def remove_personal_summary(self, user_id: str) -> bool:
-        with self._lock:
+        with self.transaction():
             existed = self.personal.pop(user_id, None) is not None
-        if existed:
-            self.save()
         return existed
 
     def set_channel_summary(self, summary: str) -> None:
-        with self._lock:
+        with self.transaction():
             self.channel["summary"] = summary
             self.channel["updated"] = str(self._today())
-        self.save()
 
     def clear_channel_summary(self) -> None:
-        with self._lock:
+        with self.transaction():
             self.channel["summary"] = ""
             self.channel["updated"] = ""
-        self.save()
 

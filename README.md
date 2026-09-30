@@ -71,6 +71,23 @@
 
 ### Railway 設定
 
+#### 記憶跨部署保留
+
+記憶包含共享記憶、個人與聊天室摘要、個人近期對話（每人最多 24 筆 user/model 訊息）及聊天室最近 30 則訊息。近期對話會沿用既有摘要濃縮規則；不是永久保存全部聊天紀錄。
+
+1. 在 **bot 所屬服務** 掛載 Railway Volume，Mount Path 設為 `/data`。若同一服務的 YouTube 通知已使用 `/data`，直接共用該 Volume。
+2. 設定環境變數 `SHIZUMU_MEMORY_PATH=/data/memory.json`。只設定路徑而未掛載 Volume，仍無法跨部署保留。
+3. 只執行一個 bot 實例；JSON 的鎖只保護同一程序，不能讓多個程序共用寫入。
+4. 啟動日誌應顯示記憶路徑 `/data/memory.json` 及載入結果。更新會即時存檔，Discord 重連不會重複載入；本機未設定變數時仍使用 `memory.json`。
+
+**搬移既有記憶：** 在重新部署或新增 Volume 前，先從仍在執行的舊部署匯出 `memory.json`，暫停 bot 後做最後一次匯出，再將檔案放入 Volume 的 `memory.json`。舊版只含摘要的 JSON 可直接使用。若 Volume 已有記憶，先備份並確認內容，不要直接覆蓋。已消失且沒有備份的舊資料無法還原；舊版只放在 RAM 的近期對話也不在匯出檔中。
+
+**備份與還原：** 使用 Railway 的 Volume 手動／排程備份，或在服務停止寫入時下載 `memory.json` 保存在安全位置。還原前停止 bot、備份目前檔案，再替換並啟動。檔案含聊天內容，不要提交至 Git。Volume 使用與備份入口見 [Railway 官方文件](https://docs.railway.com/volumes)。
+
+**部署驗收：** 新增一條共享記憶、進行個人與聊天室短對話，重新部署後檢查記憶指令及話題是否能接續；再重置記憶並重啟，確認已刪除的內容不會回來。存檔失敗會記錄錯誤；重置失敗不會回報成功。
+
+#### 程序與 API
+
 目前 [Procfile](Procfile) 使用：
 
 ```text
@@ -89,6 +106,7 @@ web: python shizumu_bot.py
 | `SHIZUMU_API_ENABLED` | 是否啟用 API，設為 `0` 可停用 | `1` |
 | `SHIZUMU_API_HOST` | API bind host | `0.0.0.0` |
 | `SHIZUMU_API_PORT` | 本機 API port；Railway 會優先使用 `$PORT` | `8000` |
+| `SHIZUMU_MEMORY_PATH` | 記憶檔路徑；Railway 應指定 Volume 內的 `/data/memory.json` | `memory.json` |
 | `NIGHTBOT_API_TOKEN` | 可選 API token；有設定時 endpoint 需要帶 `token` 或 `x-shizumu-api-token` header | 空白 |
 
 ---
